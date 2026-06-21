@@ -1,0 +1,10 @@
+# Kokoro TTS sidecar — install into a Python 3.12 venv.
+#   python3.12 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
+# System deps (not pip): ffmpeg, espeak-ng  (e.g. `brew install ffmpeg espeak-ng`)
+kokoro>=0.9.4
+misaki[en]>=0.9.4
+soundfile>=0.12
+numpy>=1.26
+fastapi>=0.115
+uvicorn>=0.30
+pydantic>=2.7

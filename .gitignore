@@ -1,0 +1,38 @@
+# ── Rust / Tauri ──
+/src-tauri/target/
+**/*.rs.bk
+*.pdb
+
+# ── Node ──
+node_modules/
+dist/
+.vite/
+*.local
+# Compiled TS output emitted next to sources (we ship .ts only)
+src/**/*.js
+
+# ── Tauri generated schemas ──
+/src-tauri/gen/
+
+# ── Python sidecar ──
+sidecar/.venv/
+**/__pycache__/
+*.pyc
+.python-version
+
+# ── Generated audio / output ──
+*.mp3
+*.m4b
+*.wav
+
+# ── OS / editor ──
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# ── Logs / temp ──
+*.log
+.meta.ffmeta
+.concat.txt
