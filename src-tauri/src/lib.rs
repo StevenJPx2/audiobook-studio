@@ -49,24 +49,32 @@ fn spawn_sidecar() {
         return;
     };
 
-    // Prefer the sidecar's own venv python, fall back to python3.12 / python3.
-    let venv_py = dir.join(".venv/bin/python");
-    let python = if venv_py.exists() {
-        venv_py.to_string_lossy().to_string()
-    } else if std::process::Command::new("python3.12").arg("--version").output().is_ok() {
-        "python3.12".to_string()
+    // Preferred launcher: `uv run` auto-syncs the env from pyproject.toml/uv.lock
+    // and is move-proof (no baked-in absolute paths). Fall back to a synced
+    // .venv, then a system python, so the app still starts without uv.
+    let script_rel = "kokoro_server.py";
+    let mut cmd = if std::process::Command::new("uv").arg("--version").output().is_ok() {
+        let mut c = std::process::Command::new("uv");
+        c.args(["run", script_rel, "--warm"]);
+        eprintln!("[sidecar] launching via `uv run`");
+        c
     } else {
-        "python3".to_string()
+        let venv_py = dir.join(".venv/bin/python");
+        let python = if venv_py.exists() {
+            venv_py.to_string_lossy().to_string()
+        } else if std::process::Command::new("python3.12").arg("--version").output().is_ok() {
+            "python3.12".to_string()
+        } else {
+            "python3".to_string()
+        };
+        eprintln!("[sidecar] uv not found; launching via {python}");
+        let mut c = std::process::Command::new(python);
+        c.arg(script_rel).arg("--warm");
+        c
     };
 
-    let script = dir.join("kokoro_server.py");
-    match std::process::Command::new(&python)
-        .arg(&script)
-        .arg("--warm")
-        .current_dir(&dir)
-        .spawn()
-    {
-        Ok(_) => eprintln!("[sidecar] launched {python} {}", script.display()),
+    match cmd.current_dir(&dir).spawn() {
+        Ok(_) => eprintln!("[sidecar] started in {}", dir.display()),
         Err(e) => eprintln!("[sidecar] failed to launch ({e}); start it manually"),
     }
 }

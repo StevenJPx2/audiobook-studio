@@ -11,7 +11,8 @@ Endpoints
   POST /tts {text_path,out_path,voice,lang,speed} -> {out_path,audio_seconds}
 
 Run (managed by the app, or standalone for dev):
-  python kokoro_server.py --host 127.0.0.1 --port 8765
+  uv run kokoro_server.py --warm            # preferred (auto-syncs env)
+  uv run kokoro_server.py --host 127.0.0.1 --port 8765
 """
 from __future__ import annotations
 

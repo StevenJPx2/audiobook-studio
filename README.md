@@ -31,8 +31,10 @@ the UI before any audio is generated.
 | **Rust** ≥ 1.77 | Tauri backend | `brew install rust` or rustup |
 | **Node** ≥ 18 | frontend build | `brew install node` |
 | **Ollama** | local LLM | `brew install ollama` then `ollama pull gemma4:e2b` |
-| **Python 3.12** | Kokoro sidecar | `brew install python@3.12` |
+| **uv** | Python env for sidecar | `brew install uv` |
 | **ffmpeg + espeak-ng** | audio + phonemes | `brew install ffmpeg espeak-ng` |
+
+> uv manages its own Python 3.12 toolchain, so you don't need a system Python.
 
 ## Setup
 
@@ -40,8 +42,8 @@ the UI before any audio is generated.
 # 1) Frontend deps
 npm install
 
-# 2) Kokoro sidecar venv (one time)
-./scripts/setup-sidecar.sh        # creates sidecar/.venv and installs requirements
+# 2) Kokoro sidecar env (one time) — uses uv
+./scripts/setup-sidecar.sh        # runs `uv sync` from sidecar/pyproject.toml
 
 # 3) Make sure Ollama is running with a model
 ollama serve &                    # if not already running
@@ -54,12 +56,13 @@ ollama pull gemma4:e2b            # fast; or use gemma4:latest for higher qualit
 npm run tauri dev
 ```
 
-The app **auto-launches the Kokoro sidecar** from `sidecar/.venv` on startup
-(it preloads the British pipeline, so the first launch takes ~20–40 s). You can
-also run it manually:
+The app **auto-launches the Kokoro sidecar** via `uv run` on startup (it
+preloads the British pipeline, so the first launch takes ~20–40 s). uv keeps
+the env in sync from `uv.lock`, so a moved or freshly-cloned project just works.
+You can also run it manually:
 
 ```bash
-sidecar/.venv/bin/python sidecar/kokoro_server.py --warm
+cd sidecar && uv run kokoro_server.py --warm
 ```
 
 ## Build (release)
@@ -105,5 +108,6 @@ audiobook-studio/
 │     └─ model.rs       # shared types
 └─ sidecar/
    ├─ kokoro_server.py  # FastAPI TTS service
-   └─ requirements.txt
+   ├─ pyproject.toml    # deps (managed by uv)
+   └─ uv.lock           # pinned, reproducible env
 ```

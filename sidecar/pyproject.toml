@@ -1,0 +1,20 @@
+[project]
+name = "audiobook-studio-sidecar"
+version = "0.1.0"
+description = "Kokoro TTS sidecar for Audiobook Studio (FastAPI)."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "kokoro>=0.9.4",
+    "misaki[en]>=0.9.4",
+    "soundfile>=0.12",
+    "numpy>=1.26",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "pydantic>=2.7",
+]
+
+# Run with:  uv run kokoro_server.py --warm
+# uv creates/syncs an isolated env from this spec on demand — no manual venv,
+# and it just re-syncs if the project is moved or freshly cloned.
+[tool.uv]
+package = false
