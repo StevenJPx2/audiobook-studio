@@ -23,6 +23,13 @@ struct TtsResp {
     audio_seconds: f64,
 }
 
+#[derive(Serialize)]
+struct CoverReq<'a> {
+    pdf_path: &'a str,
+    out_path: &'a str,
+    page: u32,
+}
+
 /// Poll the sidecar /health until it responds or the timeout elapses.
 pub async fn wait_until_ready(timeout: Duration) -> AppResult<()> {
     let client = reqwest::Client::new();
@@ -72,4 +79,23 @@ pub async fn synthesize(
     let parsed: TtsResp = resp.json().await?;
     let _ = parsed.out_path;
     Ok(parsed.audio_seconds)
+}
+
+/// Render `page` of the PDF to `out_path` (a JPEG) via the sidecar. Best-effort:
+/// callers should treat a failure as "no cover" rather than aborting the job.
+pub async fn generate_cover(pdf_path: &str, out_path: &str, page: u32) -> AppResult<()> {
+    let client = reqwest::Client::new();
+    let url = format!("{SIDECAR_BASE}/cover");
+    let req = CoverReq { pdf_path, out_path, page };
+    let resp = client
+        .post(&url)
+        .json(&req)
+        .timeout(Duration::from_secs(30))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        let txt = resp.text().await.unwrap_or_default();
+        return Err(AppError::Sidecar(format!("/cover failed: {txt}")));
+    }
+    Ok(())
 }

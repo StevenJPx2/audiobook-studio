@@ -302,6 +302,41 @@ body {
 }
 .dropzone .small { color: var(--gray-900); }
 
+/* loading state: inspecting a PDF */
+.dropzone.loading {
+  cursor: default;
+  border-style: solid;
+  border-color: var(--gray-alpha-400);
+  background: var(--bg-200);
+}
+.big-spin {
+  width: 28px;
+  height: 28px;
+  border-width: 3px;
+  margin: 0 auto var(--s-4);
+}
+
+/* skeleton shimmer */
+.skeleton-row { display: flex; align-items: center; gap: var(--s-3); }
+.sk {
+  display: block;
+  border-radius: var(--r-sm);
+  background: linear-gradient(
+    90deg,
+    var(--gray-200) 25%,
+    var(--gray-100) 37%,
+    var(--gray-200) 63%
+  );
+  background-size: 400% 100%;
+  animation: shimmer 1.4s ease infinite;
+}
+.sk-icon { width: 40px; height: 40px; border-radius: var(--r-sm); flex: none; }
+.sk-line { height: 12px; width: 100%; border-radius: var(--r-full); }
+@keyframes shimmer {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+
 /* ---------- file summary ---------- */
 .filerow {
   display: flex;

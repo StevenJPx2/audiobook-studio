@@ -40,6 +40,8 @@ interface State {
   log: { t: string; msg: string }[];
   resultPath: string | null;
   ollamaUp: boolean;
+  ollamaChecked: boolean; // false until the first models poll resolves
+  loadingFile: string | null; // filename shown while inspecting a PDF
 }
 
 const state: State = {
@@ -58,6 +60,8 @@ const state: State = {
   log: [],
   resultPath: null,
   ollamaUp: false,
+  ollamaChecked: false,
+  loadingFile: null,
 };
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -96,6 +100,8 @@ async function refreshModels() {
   } catch {
     state.ollamaUp = false;
     state.models = [];
+  } finally {
+    state.ollamaChecked = true;
   }
 }
 
@@ -108,6 +114,7 @@ async function loadPdf(path: string) {
   }
   state.busy = true;
   state.error = null;
+  state.loadingFile = path.slice(path.lastIndexOf("/") + 1);
   render();
   try {
     const book = await api.inspectPdf(path);
@@ -122,6 +129,7 @@ async function loadPdf(path: string) {
     state.error = `Couldn’t read the PDF. ${String(e)}`;
   } finally {
     state.busy = false;
+    state.loadingFile = null;
     render();
   }
 }
@@ -220,11 +228,16 @@ function stepper(): string {
 }
 
 function header(): string {
-  const ollama = state.ollamaUp
-    ? `<span class="pill"><span class="dot ok"></span>Ollama${
-        state.model ? ` · ${esc(state.model.split(":")[0])}` : ""
-      }</span>`
-    : `<span class="pill"><span class="dot bad"></span>Ollama offline</span>`;
+  let ollama: string;
+  if (!state.ollamaChecked) {
+    ollama = `<span class="pill"><span class="spin"></span>Checking Ollama…</span>`;
+  } else if (state.ollamaUp) {
+    ollama = `<span class="pill"><span class="dot ok"></span>Ollama${
+      state.model ? ` · ${esc(state.model.split(":")[0])}` : ""
+    }</span>`;
+  } else {
+    ollama = `<span class="pill"><span class="dot bad"></span>Ollama offline</span>`;
+  }
   return `
   <div class="header">
     <div class="brand">
@@ -246,6 +259,22 @@ function banner(): string {
 }
 
 function dropView(): string {
+  // Loading state: inspecting/extracting the PDF (can take seconds on big books).
+  if (state.busy) {
+    return `
+  <div class="card">
+    <div class="dropzone loading" aria-busy="true">
+      <div class="spin big-spin"></div>
+      <div class="big">Reading ${esc(state.loadingFile ?? "PDF")}…</div>
+      <div class="small">Extracting and analyzing pages. Large books can take a moment.</div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="skeleton-row"><span class="sk sk-icon"></span><span class="sk sk-line"></span></div>
+    <div class="sk sk-line" style="width:60%;margin-top:12px"></div>
+    <div class="sk sk-line" style="width:40%;margin-top:8px"></div>
+  </div>`;
+  }
   return `
   <div class="card">
     <div id="dz" class="dropzone">
@@ -534,7 +563,7 @@ async function init() {
     } else if (event.payload.type === "drop") {
       dz?.classList.remove("drag");
       const f = event.payload.paths?.[0];
-      if (f && state.stage === "drop") loadPdf(f);
+      if (f && state.stage === "drop" && !state.busy) loadPdf(f);
     } else {
       dz?.classList.remove("drag");
     }

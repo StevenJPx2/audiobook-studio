@@ -175,6 +175,19 @@ pub async fn generate_audiobook(
     }
     emit(&window, Progress::new("tts", "All chapters narrated", total, total));
 
+    // 3.5) Cover art: render PDF page 1 unless the user already dropped a cover.
+    let has_cover = ["cover.jpg", "cover.jpeg", "cover.png"]
+        .iter()
+        .any(|n| Path::new(&out_dir).join(n).exists());
+    if !has_cover {
+        emit(&window, Progress::new("bundle", "Rendering cover…", 0, 1));
+        let cover_path = Path::new(&out_dir).join("cover.jpg");
+        match kokoro::generate_cover(&pdf_path, &cover_path.to_string_lossy(), 1).await {
+            Ok(()) => {}
+            Err(e) => eprintln!("[cover] skipped ({e})"), // non-fatal
+        }
+    }
+
     // 4) Bundle into .m4b.
     emit(&window, Progress::new("bundle", "Bundling .m4b…", 0, 1));
     let safe_title = book_title.replace('/', "-");

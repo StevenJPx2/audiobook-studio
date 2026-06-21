@@ -1,5 +1,7 @@
 # Audiobook Studio
 
+[![CI](https://github.com/StevenJPx2/audiobook-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/StevenJPx2/audiobook-studio/actions/workflows/ci.yml)
+
 Drop a book PDF → a **local LLM** finds the chapters → the PDF is split and
 cleaned into transcripts → **Kokoro** narrates each chapter locally → you get a
 single chaptered **`.m4b`** with cover art. Entirely local, **$0**.
@@ -73,9 +75,10 @@ npm run tauri build
 
 ## Cover art
 
-Drop a `cover.jpg` (or `.png`) into the chosen **output folder** before
-generating and it gets embedded in the `.m4b`. A future version renders page 1
-of the PDF automatically.
+By default the app **renders page 1 of the PDF** to `cover.jpg` in the output
+folder (via the sidecar's `/cover` endpoint, PyMuPDF) and embeds it in the
+`.m4b`. To override, drop your own `cover.jpg` / `.png` into the output folder
+before generating — an existing cover is never overwritten.
 
 ## Notes & knobs
 

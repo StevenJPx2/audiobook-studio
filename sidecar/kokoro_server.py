@@ -65,6 +65,19 @@ class TtsResponse(BaseModel):
     audio_seconds: float
 
 
+class CoverRequest(BaseModel):
+    pdf_path: str
+    out_path: str
+    page: int = 1        # 1-indexed source page to render
+    zoom: float = 2.0    # render scale (2.0 ≈ 144 dpi)
+
+
+class CoverResponse(BaseModel):
+    out_path: str
+    width: int
+    height: int
+
+
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "voice_loaded": bool(_pipelines)}
@@ -119,6 +132,36 @@ def tts(req: TtsRequest) -> TtsResponse:
     print(f"[tts] {out.name}: {audio_seconds/60:.1f} min audio in {gen/60:.1f} min "
           f"({audio_seconds/gen:.1f}x realtime)", flush=True)
     return TtsResponse(out_path=str(out), audio_seconds=audio_seconds)
+
+
+@app.post("/cover", response_model=CoverResponse)
+def cover(req: CoverRequest) -> CoverResponse:
+    """Render one PDF page to a JPEG cover (defaults to page 1)."""
+    try:
+        import fitz  # PyMuPDF
+    except ImportError as e:
+        raise HTTPException(status_code=501, detail=f"PyMuPDF not installed: {e}")
+
+    src = Path(req.pdf_path)
+    if not src.exists():
+        raise HTTPException(status_code=400, detail=f"pdf_path not found: {src}")
+
+    out = Path(req.out_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    doc = fitz.open(str(src))
+    try:
+        idx = max(0, min(req.page - 1, doc.page_count - 1))
+        page = doc[idx]
+        pix = page.get_pixmap(matrix=fitz.Matrix(req.zoom, req.zoom), alpha=False)
+        pix.save(str(out), jpg_quality=90) if out.suffix.lower() in (".jpg", ".jpeg") \
+            else pix.save(str(out))
+        w, h = pix.width, pix.height
+    finally:
+        doc.close()
+
+    print(f"[cover] {src.name} p{req.page} -> {out.name} ({w}x{h})", flush=True)
+    return CoverResponse(out_path=str(out), width=w, height=h)
 
 
 def main() -> None:
