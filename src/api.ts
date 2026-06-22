@@ -36,6 +36,10 @@ export interface GenerateRequest {
   voice: VoiceConfig;
   book_title: string;
   author: string;
+  /** Optional LLM polish pass over each transcript before narration. */
+  polish?: boolean;
+  /** Ollama model tag for the polish pass; defaults to the detection model. */
+  polish_model?: string | null;
 }
 
 export interface Progress {

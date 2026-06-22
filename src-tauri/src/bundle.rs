@@ -10,9 +10,12 @@ use std::process::Command;
 fn duration_ms(path: &Path) -> AppResult<u64> {
     let out = Command::new("ffprobe")
         .args([
-            "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "csv=p=0",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "csv=p=0",
         ])
         .arg(path)
         .output()
@@ -88,14 +91,22 @@ pub fn build_m4b(
 
     let mut cmd = Command::new("ffmpeg");
     cmd.args(["-y", "-loglevel", "error"]);
-    cmd.args(["-f", "concat", "-safe", "0", "-i"]).arg(&list_path);
+    cmd.args(["-f", "concat", "-safe", "0", "-i"])
+        .arg(&list_path);
     cmd.arg("-i").arg(&meta_path);
     if let Some(ref c) = cover {
         cmd.arg("-i").arg(c);
     }
     cmd.args(["-map", "0:a", "-map_metadata", "1"]);
     if cover.is_some() {
-        cmd.args(["-map", "2:v", "-c:v", "copy", "-disposition:v:0", "attached_pic"]);
+        cmd.args([
+            "-map",
+            "2:v",
+            "-c:v",
+            "copy",
+            "-disposition:v:0",
+            "attached_pic",
+        ]);
     }
     cmd.args(["-c:a", "aac", "-b:a", bitrate, "-movflags", "+faststart"]);
     cmd.arg(out_file);

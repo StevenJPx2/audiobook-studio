@@ -36,7 +36,12 @@ pub async fn wait_until_ready(timeout: Duration) -> AppResult<()> {
     let url = format!("{SIDECAR_BASE}/health");
     let deadline = std::time::Instant::now() + timeout;
     loop {
-        if let Ok(resp) = client.get(&url).timeout(Duration::from_secs(2)).send().await {
+        if let Ok(resp) = client
+            .get(&url)
+            .timeout(Duration::from_secs(2))
+            .send()
+            .await
+        {
             if resp.status().is_success() {
                 return Ok(());
             }
@@ -51,11 +56,7 @@ pub async fn wait_until_ready(timeout: Duration) -> AppResult<()> {
 }
 
 /// Synthesize one chapter transcript file to an MP3. Returns audio length (s).
-pub async fn synthesize(
-    text_path: &str,
-    out_path: &str,
-    voice: &VoiceConfig,
-) -> AppResult<f64> {
+pub async fn synthesize(text_path: &str, out_path: &str, voice: &VoiceConfig) -> AppResult<f64> {
     let client = reqwest::Client::new();
     let url = format!("{SIDECAR_BASE}/tts");
     let req = TtsReq {
@@ -86,7 +87,11 @@ pub async fn synthesize(
 pub async fn generate_cover(pdf_path: &str, out_path: &str, page: u32) -> AppResult<()> {
     let client = reqwest::Client::new();
     let url = format!("{SIDECAR_BASE}/cover");
-    let req = CoverReq { pdf_path, out_path, page };
+    let req = CoverReq {
+        pdf_path,
+        out_path,
+        page,
+    };
     let resp = client
         .post(&url)
         .json(&req)

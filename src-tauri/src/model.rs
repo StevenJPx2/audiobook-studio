@@ -62,12 +62,23 @@ pub struct GenerateRequest {
     pub voice: VoiceConfig,
     pub book_title: String,
     pub author: String,
+    /// LLM polish pass over the algorithmic transcript. On by default (opt-out)
+    /// because the artifacts it targets — front-matter, cover/title boilerplate,
+    /// stray headings — vary per book and can't be cleaned deterministically.
+    /// Verified to only delete/normalize, never rewrite; falls back to the raw
+    /// transcript per section, and is skipped entirely if Ollama is unreachable.
+    #[serde(default)]
+    pub polish: bool,
+    /// Ollama model tag to use for the polish pass. Falls back to the detection
+    /// model when omitted on the frontend.
+    #[serde(default)]
+    pub polish_model: Option<String>,
 }
 
 /// Progress event payload emitted to the frontend over a Tauri channel/event.
 #[derive(Debug, Clone, Serialize)]
 pub struct Progress {
-    pub stage: String,   // "extract" | "boundaries" | "split" | "tts" | "bundle" | "done"
+    pub stage: String, // "extract" | "boundaries" | "split" | "tts" | "bundle" | "done"
     pub message: String,
     pub current: u32,
     pub total: u32,

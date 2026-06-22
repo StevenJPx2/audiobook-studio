@@ -80,6 +80,29 @@ folder (via the sidecar's `/cover` endpoint, PyMuPDF) and embeds it in the
 `.m4b`. To override, drop your own `cover.jpg` / `.png` into the output folder
 before generating — an existing cover is never overwritten.
 
+## Transcript cleanup
+
+Extracted PDF text is cleaned into TTS-friendly prose by a fast, deterministic
+pass that:
+
+- drops repeating **running heads/footers** (detected by frequency, so it's
+  book-agnostic), including ones the extractor fuses onto body text;
+- removes **footnote/endnote apparatus** and chapter-end **bibliography**
+  entries;
+- strips inline **superscript footnote markers** (e.g. `Church.”12`) while
+  leaving real numbers (`Isaiah 7:9`, `1 Cor. 2:14`, years) intact;
+- repairs hyphenation split across line breaks.
+
+A second **LLM polish pass** then removes the artifacts that vary too much from
+book to book to catch with rules — front-matter, cover/title-page boilerplate,
+credits, epigraphs, and stray heading fragments. It is **on by default
+(opt-out)**: untick **“Polish transcripts with the local model”** to skip it.
+The pass is **deletion-only and verified** — each section is kept only if its
+length stays within tolerance of the original (guarding against
+rewrites/summaries), any failed or low-confidence section falls back to the
+deterministic transcript, and the whole pass is skipped automatically when
+Ollama is unreachable.
+
 ## Notes & knobs
 
 - **Model pick:** the UI prefers `gemma4:e2b` for speed; any chat model works.

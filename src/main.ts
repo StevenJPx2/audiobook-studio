@@ -42,6 +42,7 @@ interface State {
   ollamaUp: boolean;
   ollamaChecked: boolean; // false until the first models poll resolves
   loadingFile: string | null; // filename shown while inspecting a PDF
+  polish: boolean; // LLM polish pass over transcripts (on by default; opt-out)
 }
 
 const state: State = {
@@ -62,6 +63,7 @@ const state: State = {
   ollamaUp: false,
   ollamaChecked: false,
   loadingFile: null,
+  polish: true,
 };
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -174,6 +176,8 @@ async function generate() {
       voice: state.voice,
       book_title: state.title,
       author: state.author,
+      polish: state.polish,
+      polish_model: state.model || null,
     });
     state.resultPath = path;
     state.stage = "done";
@@ -398,6 +402,23 @@ function reviewView(): string {
       <label for="outdir">Output folder</label>
       <input type="text" id="outdir" value="${esc(state.outDir)}" />
     </div>
+    <label class="check-row" for="polish">
+      <input type="checkbox" id="polish" ${
+        state.ollamaUp && state.polish ? "checked" : ""
+      } ${state.ollamaUp ? "" : "disabled"} />
+      <span>
+        <span class="check-title">Polish transcripts with the local model${
+          state.ollamaUp ? " (recommended)" : ""
+        }</span>
+        <span class="check-sub">${
+          state.ollamaUp
+            ? `Uses ${
+                state.model ? esc(state.model) : "the selected model"
+              } to remove front-matter, cover/title boilerplate, stray headings, and other artifacts the rules can't catch — these differ from book to book. Deletion only: your text is never rewritten, and each section falls back to the raw transcript if the model is unsure. Adds some time per chapter; untick to skip.`
+            : "Requires Ollama to be running. Without it, transcripts use the built-in cleaner only."
+        }</span>
+      </span>
+    </label>
     <div class="actions">
       <button class="btn secondary" id="back">Back</button>
       <button class="btn primary" id="generate">Generate Audiobook</button>
@@ -533,6 +554,8 @@ function bind() {
   if (author) author.onchange = () => (state.author = author.value);
   const outdir = document.querySelector<HTMLInputElement>("#outdir");
   if (outdir) outdir.onchange = () => (state.outDir = outdir.value);
+  const polish = document.querySelector<HTMLInputElement>("#polish");
+  if (polish) polish.onchange = () => (state.polish = polish.checked);
 }
 
 // ---------- wire backend events + native drag-drop ----------
