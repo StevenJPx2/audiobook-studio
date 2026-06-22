@@ -3,20 +3,7 @@
 //! (optional LLM polish) -> Kokoro TTS (Python sidecar) -> chaptered .m4b.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod agent;
-mod app;
-mod bundle;
-mod cover;
-mod error;
-mod g2p;
-mod kokoro;
-mod model;
-mod ocr;
-mod pdf;
-mod pipeline;
-mod sidecar;
-mod split;
-mod tts;
+use audiobook_studio::{app, g2p, sidecar};
 
 fn main() -> eframe::Result<()> {
     // Warm the G2P sidecar early (background) so it's ready by the time TTS runs.

@@ -6,9 +6,19 @@ authors = ["Audiobook Studio"]
 edition = "2021"
 rust-version = "1.77"
 
+[lib]
+name = "audiobook_studio"
+path = "src/lib.rs"
+
 [[bin]]
 name = "audiobook-studio"
 path = "src/main.rs"
+
+# Headless CLI over the same pipeline. GUI stays the default experience; `abs`
+# is the scriptable/agent-facing entry point.
+[[bin]]
+name = "abs"
+path = "src/bin/abs.rs"
 
 [dependencies]
 # Native GUI (immediate-mode). No web layer, no IPC.
@@ -16,6 +26,7 @@ eframe = "0.29"
 egui = "0.29"
 egui-phosphor = "0.7" # Phosphor icon font for egui (named glyph constants)
 rfd = "0.15"          # native open-file / pick-folder dialogs
+clap = { version = "4", features = ["derive"] } # headless `abs` CLI
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
