@@ -68,8 +68,15 @@ Audiobook Studio.app/
 ```
 
 `scripts/build-app.sh`: `cargo build --release`, freeze the sidecar, assemble
-the tree above, write `Info.plist`, copy the pre-cached model. Produces an
-**unsigned** `.app`.
+the tree above, write `Info.plist`, (slim) skip or (SLIM=0) copy the model,
+then **ad-hoc codesign the whole bundle** (`codesign --force --deep --sign -`).
+
+The ad-hoc re-sign is required, not cosmetic: the Rust executable ships with a
+linker/ad-hoc signature that seals only itself. Adding the sibling files
+(`abs`, `libpdfium.dylib`, `Resources/sidecar`, model) invalidates that seal, so
+macOS reports the app as **"damaged and can't be opened."** Re-signing the
+assembled bundle ad-hoc (no Developer ID required) seals the final contents.
+Homebrew-cask installs aren't quarantined, so ad-hoc is enough to launch.
 
 ## Release process (tag → CI → Homebrew)
 

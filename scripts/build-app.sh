@@ -69,15 +69,23 @@ else
   fi
 fi
 
-echo "==> 5/5  Done (UNSIGNED)"
+echo "==> 5/6  Ad-hoc codesign (bundle consistency)"
+# The Rust binary ships with a stale ad-hoc/linker signature that seals ONLY
+# the executable. After adding sibling files (abs, libpdfium, sidecar, model)
+# that signature no longer matches the bundle, so macOS reports the app as
+# "damaged". Re-sign the WHOLE bundle ad-hoc (no Developer ID needed) so the
+# signature seals the final contents. Homebrew-cask installs aren't quarantined,
+# so an ad-hoc signature is sufficient to launch without a Gatekeeper prompt.
+codesign --force --deep --sign - "$APP"
+codesign --verify --deep --strict "$APP"
+echo "    signed + verified (ad-hoc)"
+
+echo "==> 6/6  Done (ad-hoc signed, unnotarized)"
 SIZE="$(du -sh "$APP" | cut -f1)"
 echo "    $APP  ($SIZE)"
 echo
 echo "Launch:   open \"$APP\""
 echo "CLI:      \"$MACOS/abs\" doctor"
 echo
-echo "Next (deferred — needs Developer ID; see BUNDLING.md):"
-echo "  codesign --deep --force --options runtime --timestamp \\"
-echo "    --entitlements packaging/entitlements.plist \\"
-echo "    --sign \"Developer ID Application: <NAME> (<TEAMID>)\" \"$APP\""
-echo "  xcrun notarytool submit … && xcrun stapler staple \"$APP\""
+echo "Optional (only for direct .app download, NOT for the Homebrew cask) — see"
+echo "BUNDLING.md: Developer ID codesign + notarytool + stapler."
