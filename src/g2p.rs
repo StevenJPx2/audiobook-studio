@@ -50,9 +50,7 @@ fn find_sidecar_dir() -> Option<PathBuf> {
         std::env::var("AUDIOBOOK_SIDECAR_DIR")
             .ok()
             .map(PathBuf::from),
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.join("sidecar"))),
+        crate::bundle_env::exe_dir().map(|d| d.join("sidecar")),
         std::env::current_dir().ok().map(|d| d.join("sidecar")),
         std::env::current_dir().ok().map(|d| d.join("../sidecar")),
     ];
@@ -70,8 +68,7 @@ fn find_sidecar_dir() -> Option<PathBuf> {
 ///   3. `<exe_dir>/sidecar/g2p_server` (binary-adjacent)
 ///   4. `<repo>/sidecar/dist/g2p_server` (local freeze output, for testing)
 fn find_frozen_sidecar() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok();
-    let exe_dir = exe.as_ref().and_then(|p| p.parent().map(|d| d.to_path_buf()));
+    let exe_dir = crate::bundle_env::exe_dir();
     let candidates = [
         std::env::var("AUDIOBOOK_SIDECAR_BIN").ok().map(PathBuf::from),
         exe_dir

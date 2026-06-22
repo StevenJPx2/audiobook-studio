@@ -394,9 +394,7 @@ fn libpdfium_present() -> bool {
     } else {
         "libpdfium.so"
     };
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+    let exe_dir = audiobook_studio::bundle_env::exe_dir();
     if let Some(d) = exe_dir {
         if d.join(name).exists() {
             return true;

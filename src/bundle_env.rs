@@ -8,6 +8,18 @@
 
 use std::path::PathBuf;
 
+/// Directory containing the running executable, with symlinks resolved.
+///
+/// `std::env::current_exe()` can return a symlink path (e.g. a Homebrew
+/// `bin/abs` that links into `libexec/`), whose parent then lacks the sibling
+/// assets (libpdfium, sidecar). Canonicalizing follows the link chain to the
+/// real binary so exe-relative asset lookups land in the install dir.
+pub fn exe_dir() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let real = std::fs::canonicalize(&exe).unwrap_or(exe);
+    real.parent().map(|d| d.to_path_buf())
+}
+
 /// Detect the `.app` bundle and wire up offline model loading. Call once at
 /// process start, before any TTS load. Safe to call from both binaries.
 pub fn init() {
@@ -31,8 +43,8 @@ pub fn init() {
 /// `…/Audiobook Studio.app/Contents/Resources` when running inside a bundle.
 /// The executable lives in `Contents/MacOS/`, so Resources is a sibling.
 fn bundle_resources_dir() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    let macos_dir = exe.parent()?; // Contents/MacOS
+    let macos_dir = exe_dir()?; // Contents/MacOS (symlinks resolved)
+    let macos_dir = macos_dir.as_path();
     if macos_dir.file_name()?.to_str()? != "MacOS" {
         return None;
     }

@@ -10,9 +10,9 @@ use std::path::Path;
 /// library search path. Returns a readable error if none is found.
 fn pdfium() -> AppResult<Pdfium> {
     // Try, in order: next to the executable, the current dir, then the system.
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+    // exe_dir() canonicalizes symlinks so a Homebrew bin->libexec link resolves
+    // to the dir that actually holds libpdfium.dylib.
+    let exe_dir = crate::bundle_env::exe_dir();
     let mut candidates: Vec<std::path::PathBuf> = Vec::new();
     if let Some(d) = &exe_dir {
         candidates.push(Pdfium::pdfium_platform_library_name_at_path(d));
