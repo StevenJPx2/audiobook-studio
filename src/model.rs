@@ -75,7 +75,7 @@ pub struct GenerateRequest {
     pub polish_model: Option<String>,
 }
 
-/// Progress event payload emitted to the frontend over a Tauri channel/event.
+/// Progress event payload sent from the pipeline thread to the egui UI.
 #[derive(Debug, Clone, Serialize)]
 pub struct Progress {
     pub stage: String, // "extract" | "boundaries" | "split" | "tts" | "bundle" | "done"

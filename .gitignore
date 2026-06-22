@@ -1,18 +1,7 @@
-# ── Rust / Tauri ──
-/src-tauri/target/
+# ── Rust ──
+/target/
 **/*.rs.bk
 *.pdb
-
-# ── Node ──
-node_modules/
-dist/
-.vite/
-*.local
-# Compiled TS output emitted next to sources (we ship .ts only)
-src/**/*.js
-
-# ── Tauri generated schemas ──
-/src-tauri/gen/
 
 # ── Python sidecar ──
 sidecar/.venv/

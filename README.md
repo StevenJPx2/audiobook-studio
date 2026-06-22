@@ -6,48 +6,45 @@ Drop a book PDF → a **local LLM** finds the chapters → the PDF is split and
 cleaned into transcripts → **Kokoro** narrates each chapter locally → you get a
 single chaptered **`.m4b`** with cover art. Entirely local, **$0**.
 
-- **Shell:** Tauri 2 (Rust backend + TypeScript frontend)
+- **UI:** native [egui/eframe](https://github.com/emilk/egui) — a single Rust binary, no web layer
 - **Agent:** [Rig](https://github.com/0xPlaygrounds/rig) (`rig-core`) talking to **Ollama**
 - **TTS:** Kokoro via a small Python **sidecar** (FastAPI)
-- **Design:** Vercel's [Geist](https://vercel.com/design.md) design system (light + dark)
 
 ---
 
 ## How it works
 
 ```
- PDF ──▶ extract pages (pdf-extract) ──▶ candidate headings (outline or text scan)
+ PDF ──▶ extract pages (pdf-extract) ──▶ candidate headings (outline + text scan, TOC-deduped)
      ──▶ Rig + Ollama → chapter boundaries (JSON)  ──▶ contiguous page ranges
-     ──▶ clean transcripts (.txt, TTS-friendly)    ──▶ Kokoro sidecar → per-chapter MP3
+     ──▶ clean transcripts (.txt) ──▶ optional LLM polish ──▶ Kokoro sidecar → per-chapter MP3
      ──▶ ffmpeg → chaptered .m4b (+ cover, metadata)
 ```
 
-The Rust backend orchestrates the pipeline and streams progress to the UI over
-the `audiobook://progress` event. Chapter detection is reviewable/editable in
-the UI before any audio is generated.
+The pipeline (`src/pipeline.rs`) runs on a background thread and reports
+progress to the egui UI over a channel. Chapter detection is
+reviewable/editable in the app before any audio is generated.
 
 ## Prerequisites
 
 | Tool | Why | Install (macOS) |
 |------|-----|-----------------|
-| **Rust** ≥ 1.77 | Tauri backend | `brew install rust` or rustup |
-| **Node** ≥ 18 | frontend build | `brew install node` |
+| **Rust** ≥ 1.77 | the app | `brew install rust` or rustup |
 | **Ollama** | local LLM | `brew install ollama` then `ollama pull gemma4:e2b` |
 | **uv** | Python env for sidecar | `brew install uv` |
 | **ffmpeg + espeak-ng** | audio + phonemes | `brew install ffmpeg espeak-ng` |
 
 > uv manages its own Python 3.12 toolchain, so you don't need a system Python.
+> On Linux you'll also need the usual eframe build deps (GTK/X11/GL) — see the
+> `app` job in `.github/workflows/ci.yml` for the exact apt packages.
 
 ## Setup
 
 ```bash
-# 1) Frontend deps
-npm install
-
-# 2) Kokoro sidecar env (one time) — uses uv
+# 1) Kokoro sidecar env (one time) — uses uv
 ./scripts/setup-sidecar.sh        # runs `uv sync` from sidecar/pyproject.toml
 
-# 3) Make sure Ollama is running with a model
+# 2) Make sure Ollama is running with a model
 ollama serve &                    # if not already running
 ollama pull gemma4:e2b            # fast; or use gemma4:latest for higher quality
 ```
@@ -55,13 +52,14 @@ ollama pull gemma4:e2b            # fast; or use gemma4:latest for higher qualit
 ## Run (dev)
 
 ```bash
-npm run tauri dev
+cargo run
 ```
 
 The app **auto-launches the Kokoro sidecar** via `uv run` on startup (it
-preloads the British pipeline, so the first launch takes ~20–40 s). uv keeps
-the env in sync from `uv.lock`, so a moved or freshly-cloned project just works.
-You can also run it manually:
+preloads the British pipeline, so the first launch takes ~20–40 s), and reuses
+an already-running sidecar instead of fighting for the port. uv keeps the env
+in sync from `uv.lock`, so a moved or freshly-cloned project just works. You can
+also run the sidecar manually:
 
 ```bash
 cd sidecar && uv run kokoro_server.py --warm
@@ -70,7 +68,7 @@ cd sidecar && uv run kokoro_server.py --warm
 ## Build (release)
 
 ```bash
-npm run tauri build
+cargo build --release    # binary at target/release/audiobook-studio
 ```
 
 ## Cover art
@@ -118,20 +116,18 @@ Ollama is unreachable.
 
 ```
 audiobook-studio/
-├─ src/                 # TypeScript frontend (Geist UI)
-│  ├─ main.ts           # state machine + views
-│  ├─ api.ts            # typed bridge to Rust commands
-│  └─ styles.css        # Geist design tokens
-├─ src-tauri/
-│  └─ src/
-│     ├─ lib.rs         # app builder + sidecar launcher
-│     ├─ commands.rs    # Tauri commands + pipeline orchestration
-│     ├─ agent.rs       # Rig + Ollama boundary detection
-│     ├─ pdf.rs         # text extraction + TTS cleaning
-│     ├─ split.rs       # boundaries → page ranges → transcripts
-│     ├─ kokoro.rs      # sidecar HTTP client
-│     ├─ bundle.rs      # ffmpeg .m4b builder
-│     └─ model.rs       # shared types
+├─ Cargo.toml           # single Rust binary (eframe)
+├─ src/
+│  ├─ main.rs           # eframe entry; spawns sidecar
+│  ├─ app.rs            # egui UI + screen state machine
+│  ├─ pipeline.rs       # GUI-agnostic pipeline (progress via callback)
+│  ├─ sidecar.rs        # Kokoro sidecar launcher / health probe
+│  ├─ agent.rs          # Rig + Ollama boundary detection + transcript polish
+│  ├─ pdf.rs            # text extraction, heading scan, TTS cleaning
+│  ├─ split.rs          # boundaries → page ranges → transcripts
+│  ├─ kokoro.rs         # sidecar HTTP client
+│  ├─ bundle.rs         # ffmpeg .m4b builder
+│  └─ model.rs          # shared types
 └─ sidecar/
    ├─ kokoro_server.py  # FastAPI TTS service
    ├─ pyproject.toml    # deps (managed by uv)
