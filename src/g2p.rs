@@ -88,6 +88,28 @@ fn find_frozen_sidecar() -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
+/// What `spawn_server` would launch, for diagnostics (e.g. `abs doctor`).
+/// Mirrors the real resolution order so the report can't drift from behavior.
+pub enum SidecarResolution {
+    /// Frozen standalone binary (production .app form).
+    Frozen(PathBuf),
+    /// Dev Python source dir containing `g2p_server.py`.
+    Dev(PathBuf),
+    /// Nothing found.
+    None,
+}
+
+/// Resolve the sidecar the same way `spawn_server` does, without launching it.
+pub fn resolve_sidecar() -> SidecarResolution {
+    if let Some(bin) = find_frozen_sidecar() {
+        SidecarResolution::Frozen(bin)
+    } else if let Some(dir) = find_sidecar_dir() {
+        SidecarResolution::Dev(dir)
+    } else {
+        SidecarResolution::None
+    }
+}
+
 fn spawn_server() -> AppResult<Server> {
     // Prefer the frozen standalone binary (production .app); fall back to the
     // dev Python path (`uv run` / `.venv`) so `cargo run` works unfrozen.

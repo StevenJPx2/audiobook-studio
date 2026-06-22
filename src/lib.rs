@@ -11,6 +11,7 @@
 pub mod agent;
 pub mod app;
 pub mod bundle;
+pub mod bundle_env;
 pub mod cover;
 pub mod error;
 pub mod g2p;

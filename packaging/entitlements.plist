@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened-runtime entitlements for codesign --options runtime (used at the
+  DEFERRED signing/notarization step; see BUNDLING.md). The JIT / unsigned-
+  executable-memory allowances cover MLX/Metal and the PyInstaller-frozen
+  sidecar, which can otherwise be killed under the hardened runtime.
+  Tighten these once signing is validated.
+-->
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <!-- Ollama (chapter detection / OCR / polish) is reached over localhost. -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+</dict>
+</plist>

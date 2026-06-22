@@ -10,7 +10,7 @@
 //! Commands: `detect`, `generate`, `list-models`, `doctor`.
 
 use audiobook_studio::model::{Chapter, GenerateRequest, Progress, VoiceConfig};
-use audiobook_studio::{g2p, ocr, pipeline, sidecar};
+use audiobook_studio::{bundle_env, g2p, ocr, pipeline, sidecar};
 use clap::{Parser, Subcommand};
 use std::process::ExitCode;
 
@@ -81,6 +81,8 @@ enum Command {
 }
 
 fn main() -> ExitCode {
+    // In a packaged .app, point HF cache at the bundled model + force offline.
+    bundle_env::init();
     let cli = Cli::parse();
     // Warm the G2P sidecar early only for commands that need TTS.
     if matches!(cli.command, Command::Generate { .. }) {
@@ -309,16 +311,22 @@ async fn cmd_doctor(json: bool) -> Result<(), String> {
         },
     });
 
-    // Sidecar dir (g2p_server.py) resolvable.
-    let sidecar_ok = sidecar_dir_present();
+    // G2P sidecar: frozen binary (production) or dev source dir, resolved the
+    // same way the runtime does (single source of truth in g2p.rs).
+    let (sidecar_ok, sidecar_detail) = match g2p::resolve_sidecar() {
+        g2p::SidecarResolution::Frozen(p) => (true, format!("frozen binary: {}", p.display())),
+        g2p::SidecarResolution::Dev(d) => {
+            (true, format!("dev source: {}/g2p_server.py", d.display()))
+        }
+        g2p::SidecarResolution::None => (
+            false,
+            "not found — set AUDIOBOOK_SIDECAR_BIN or AUDIOBOOK_SIDECAR_DIR".into(),
+        ),
+    };
     checks.push(Check {
         name: "g2p-sidecar",
         ok: sidecar_ok,
-        detail: if sidecar_ok {
-            "g2p_server.py found".into()
-        } else {
-            "sidecar not found — set AUDIOBOOK_SIDECAR_DIR".into()
-        },
+        detail: sidecar_detail,
     });
 
     let all_ok = checks.iter().all(|c| c.ok);
@@ -397,13 +405,4 @@ fn libpdfium_present() -> bool {
     std::path::Path::new(name).exists()
 }
 
-fn sidecar_dir_present() -> bool {
-    // Mirror the sidecar resolution order: env override, exe-relative, cwd.
-    if let Some(dir) = std::env::var_os("AUDIOBOOK_SIDECAR_DIR") {
-        if std::path::Path::new(&dir).join("g2p_server.py").exists() {
-            return true;
-        }
-    }
-    let candidates = ["sidecar/g2p_server.py", "../sidecar/g2p_server.py"];
-    candidates.iter().any(|c| std::path::Path::new(c).exists())
-}
+

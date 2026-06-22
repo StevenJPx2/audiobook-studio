@@ -3,9 +3,11 @@
 //! (optional LLM polish) -> Kokoro TTS (Python sidecar) -> chaptered .m4b.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use audiobook_studio::{app, g2p, sidecar};
+use audiobook_studio::{app, bundle_env, g2p, sidecar};
 
 fn main() -> eframe::Result<()> {
+    // In a packaged .app, point HF cache at the bundled model + force offline.
+    bundle_env::init();
     // Warm the G2P sidecar early (background) so it's ready by the time TTS runs.
     sidecar::spawn_sidecar();
 
