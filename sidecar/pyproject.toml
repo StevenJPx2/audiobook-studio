@@ -7,15 +7,29 @@ dependencies = [
     "misaki[en]>=0.9.4",
     # spaCy's CLI imports click but doesn't always declare it as a hard dep.
     "click>=8.1",
+    # Declare the spaCy English model explicitly (pinned wheel) so `uv sync`
+    # keeps it (it would otherwise prune the ad-hoc-downloaded model) — this
+    # makes the env reproducible AND gives the model real .dist-info metadata,
+    # which PyInstaller --copy-metadata and spacy.util.is_package both need so
+    # the frozen sidecar loads it offline instead of trying to download it.
+    "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
 ]
+
+# Build-only tooling for freezing the sidecar into a standalone binary for the
+# distributable .app (see scripts/freeze-sidecar.sh, BUNDLING.md). Not needed
+# for the dev `uv run g2p_server.py` path. Install with:
+#   uv sync --group freeze
+[dependency-groups]
+freeze = ["pyinstaller>=6.0"]
 
 # Run with:  uv run g2p_server.py
 # uv creates/syncs an isolated env from this spec on demand — no manual venv.
 #
 # misaki's English extra pulls in torch + a transformer POS model, but we use
 # the perceptron tagger (trf=False), which needs neither. Exclude them so the
-# env stays small (~200MB vs ~1GB) and torch-free. espeak-ng must be present on
-# the system PATH (used as the OOV fallback phonemizer).
+# env stays small (~200MB vs ~1GB) and torch-free. The espeak-ng OOV fallback
+# uses `espeakng_loader`, which bundles its own libespeak-ng + data — so NO
+# system espeak-ng install is required (dev or frozen).
 [tool.uv]
 package = false
 override-dependencies = [

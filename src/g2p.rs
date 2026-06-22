@@ -44,7 +44,7 @@ struct Server {
 
 static SERVER: Mutex<Option<Server>> = Mutex::new(None);
 
-/// Locate the sidecar directory containing `g2p_server.py`.
+/// Locate the sidecar directory containing `g2p_server.py` (dev/source path).
 fn find_sidecar_dir() -> Option<PathBuf> {
     let candidates = [
         std::env::var("AUDIOBOOK_SIDECAR_DIR")
@@ -62,29 +62,65 @@ fn find_sidecar_dir() -> Option<PathBuf> {
         .find(|p| p.join("g2p_server.py").exists())
 }
 
-fn spawn_server() -> AppResult<Server> {
-    let dir = find_sidecar_dir()
-        .ok_or_else(|| AppError::Sidecar("g2p_server.py not found".into()))?;
+/// Locate a frozen, standalone sidecar binary (`g2p_server`) — the form shipped
+/// in the distributable `.app`, which needs no Python/uv at runtime. Checked
+/// before the dev Python path. Resolution order:
+///   1. `$AUDIOBOOK_SIDECAR_BIN` explicit override
+///   2. `<exe>/../Resources/sidecar/g2p_server` (the .app bundle layout)
+///   3. `<exe_dir>/sidecar/g2p_server` (binary-adjacent)
+///   4. `<repo>/sidecar/dist/g2p_server` (local freeze output, for testing)
+fn find_frozen_sidecar() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok();
+    let exe_dir = exe.as_ref().and_then(|p| p.parent().map(|d| d.to_path_buf()));
+    let candidates = [
+        std::env::var("AUDIOBOOK_SIDECAR_BIN").ok().map(PathBuf::from),
+        exe_dir
+            .as_ref()
+            .map(|d| d.join("../Resources/sidecar/g2p_server")),
+        exe_dir.as_ref().map(|d| d.join("sidecar/g2p_server")),
+        std::env::current_dir()
+            .ok()
+            .map(|d| d.join("sidecar/dist/g2p_server")),
+    ];
+    candidates
+        .into_iter()
+        .flatten()
+        .find(|p| p.is_file())
+}
 
-    // Prefer `uv run` (auto-syncs the env); fall back to the synced .venv python.
-    let mut cmd = if Command::new("uv").arg("--version").output().is_ok() {
-        let mut c = Command::new("uv");
-        c.args(["run", "g2p_server.py"]);
-        c
+fn spawn_server() -> AppResult<Server> {
+    // Prefer the frozen standalone binary (production .app); fall back to the
+    // dev Python path (`uv run` / `.venv`) so `cargo run` works unfrozen.
+    let (mut cmd, work_dir) = if let Some(bin) = find_frozen_sidecar() {
+        let work_dir = bin
+            .parent()
+            .map(|d| d.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
+        (Command::new(bin), work_dir)
     } else {
-        let venv_py = dir.join(".venv/bin/python");
-        let py = if venv_py.exists() {
-            venv_py.to_string_lossy().to_string()
+        let dir = find_sidecar_dir()
+            .ok_or_else(|| AppError::Sidecar("g2p_server not found (no frozen binary or g2p_server.py)".into()))?;
+        // Prefer `uv run` (auto-syncs the env); fall back to the synced .venv python.
+        let c = if Command::new("uv").arg("--version").output().is_ok() {
+            let mut c = Command::new("uv");
+            c.args(["run", "g2p_server.py"]);
+            c
         } else {
-            "python3".to_string()
+            let venv_py = dir.join(".venv/bin/python");
+            let py = if venv_py.exists() {
+                venv_py.to_string_lossy().to_string()
+            } else {
+                "python3".to_string()
+            };
+            let mut c = Command::new(py);
+            c.arg("g2p_server.py");
+            c
         };
-        let mut c = Command::new(py);
-        c.arg("g2p_server.py");
-        c
+        (c, dir)
     };
 
     let mut child = cmd
-        .current_dir(&dir)
+        .current_dir(&work_dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
