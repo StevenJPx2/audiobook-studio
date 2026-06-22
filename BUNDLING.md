@@ -121,6 +121,18 @@ from a website): sign + notarize with a Developer ID identity using
 memory for MLX + the frozen Python sidecar), then `xcrun notarytool submit` →
 `xcrun stapler staple`. Not needed for the Homebrew path.
 
+## App icon
+
+`packaging/icon/AppIcon.svg` → `scripts/make-icon.sh` → `packaging/AppIcon.icns`
+(all 10 macOS sizes) + `packaging/icon/window-512.png`. `build-app.sh` copies
+the icns into `Contents/Resources` (Info.plist `CFBundleIconFile = AppIcon`);
+`main.rs` sets the running window/dock icon via `ViewportBuilder::with_icon`.
+
+> If a *reinstalled/replaced* app shows the old or a generic icon, that's the
+> macOS icon cache, not a bundle problem. Refresh with:
+> `lsregister -f "/Applications/Audiobook Studio.app"` then `killall Dock Finder`
+> (or log out/in). Fresh installs are unaffected.
+
 ## Known risks / open items
 
 - PyInstaller + spaCy/misaki data files sometimes need explicit hidden-imports;
