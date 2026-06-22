@@ -28,6 +28,13 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "Audiobook Studio",
         options,
-        Box::new(|_cc| Ok(Box::<app::App>::default())),
+        Box::new(|cc| {
+            // Register the Phosphor icon font as a fallback so icon glyphs in
+            // labels/buttons render alongside normal text.
+            let mut fonts = eframe::egui::FontDefinitions::default();
+            egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+            cc.egui_ctx.set_fonts(fonts);
+            Ok(Box::<app::App>::default())
+        }),
     )
 }

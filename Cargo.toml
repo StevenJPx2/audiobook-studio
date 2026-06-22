@@ -14,6 +14,7 @@ path = "src/main.rs"
 # Native GUI (immediate-mode). No web layer, no IPC.
 eframe = "0.29"
 egui = "0.29"
+egui-phosphor = "0.7" # Phosphor icon font for egui (named glyph constants)
 rfd = "0.15"          # native open-file / pick-folder dialogs
 
 serde = { version = "1", features = ["derive"] }

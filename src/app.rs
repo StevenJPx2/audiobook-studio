@@ -280,14 +280,21 @@ impl eframe::App for App {
                         (egui::Color32::from_rgb(210, 90, 90), "Ollama: offline")
                     };
                     ui.label(label);
-                    ui.colored_label(dot, "●");
+                    // Painted dot — no font glyph, so it can never render as tofu.
+                    let r = 5.0;
+                    let (rect, _) =
+                        ui.allocate_exact_size(egui::vec2(r * 2.0, r * 2.0), egui::Sense::hover());
+                    ui.painter().circle_filled(rect.center(), r, dot);
                 });
             });
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(err) = &self.error {
-                ui.colored_label(egui::Color32::from_rgb(210, 90, 90), format!("⚠ {err}"));
+                ui.colored_label(
+                    egui::Color32::from_rgb(210, 90, 90),
+                    format!("{}  {err}", egui_phosphor::regular::WARNING),
+                );
                 ui.separator();
             }
             match self.stage {
@@ -312,7 +319,13 @@ impl App {
                 ui.heading("Drop a book PDF here");
                 ui.label("A local model finds the chapters; Kokoro narrates them.");
                 ui.add_space(12.0);
-                if ui.button("📂  Browse for a PDF…").clicked() {
+                if ui
+                    .button(format!(
+                        "{}  Browse for a PDF…",
+                        egui_phosphor::regular::FOLDER_OPEN
+                    ))
+                    .clicked()
+                {
                     if let Some(path) = rfd::FileDialog::new()
                         .add_filter("PDF", &["pdf"])
                         .pick_file()
@@ -332,18 +345,29 @@ impl App {
                 self.chapters.len()
             ));
             ui.add_space(6.0);
-            egui::Grid::new("chapters").striped(true).num_columns(3).show(ui, |ui| {
-                ui.strong("#");
-                ui.strong("Title");
-                ui.strong("Pages");
-                ui.end_row();
-                for ch in &mut self.chapters {
-                    ui.label(ch.order.to_string());
-                    ui.text_edit_singleline(&mut ch.title);
-                    ui.label(format!("{}–{}", ch.start_page, ch.end_page));
+            // Give the title column a generous, fixed width so the edit boxes
+            // don't shrink to their content (which truncated titles to a few
+            // characters). The box also grows with the window via the fraction.
+            let title_w = (ui.available_width() - 160.0).clamp(220.0, 560.0);
+            egui::Grid::new("chapters")
+                .striped(true)
+                .num_columns(3)
+                .min_col_width(40.0)
+                .spacing([12.0, 6.0])
+                .show(ui, |ui| {
+                    ui.strong("#");
+                    ui.strong("Title");
+                    ui.strong("Pages");
                     ui.end_row();
-                }
-            });
+                    for ch in &mut self.chapters {
+                        ui.label(ch.order.to_string());
+                        ui.add(
+                            egui::TextEdit::singleline(&mut ch.title).desired_width(title_w),
+                        );
+                        ui.label(format!("{}–{}", ch.start_page, ch.end_page));
+                        ui.end_row();
+                    }
+                });
 
             ui.add_space(12.0);
             ui.heading("Narration");
@@ -382,15 +406,19 @@ impl App {
                     });
                 ui.end_row();
 
+                let field_w = (ui.available_width() - 150.0).clamp(220.0, 560.0);
                 ui.label("Title");
-                ui.text_edit_singleline(&mut self.title);
+                ui.add(egui::TextEdit::singleline(&mut self.title).desired_width(field_w));
                 ui.end_row();
                 ui.label("Author");
-                ui.text_edit_singleline(&mut self.author);
+                ui.add(egui::TextEdit::singleline(&mut self.author).desired_width(field_w));
                 ui.end_row();
                 ui.label("Output folder");
                 ui.horizontal(|ui| {
-                    ui.text_edit_singleline(&mut self.out_dir);
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.out_dir)
+                            .desired_width(field_w - 36.0),
+                    );
                     if ui.button("…").clicked() {
                         if let Some(dir) = rfd::FileDialog::new().pick_folder() {
                             self.out_dir = dir.to_string_lossy().to_string();
@@ -415,14 +443,23 @@ impl App {
 
             ui.add_space(12.0);
             ui.horizontal(|ui| {
-                if ui.button("← Back").clicked() {
+                if ui
+                    .button(format!("{}  Back", egui_phosphor::regular::ARROW_LEFT))
+                    .clicked()
+                {
                     self.stage = Stage::Drop;
                     self.book = None;
                     self.chapters.clear();
                 }
                 let can_go = !self.chapters.is_empty() && !self.out_dir.is_empty() && !self.busy;
                 if ui
-                    .add_enabled(can_go, egui::Button::new("Generate Audiobook"))
+                    .add_enabled(
+                        can_go,
+                        egui::Button::new(format!(
+                            "{}  Generate Audiobook",
+                            egui_phosphor::regular::PLAY
+                        )),
+                    )
                     .clicked()
                 {
                     self.generate();
@@ -452,13 +489,22 @@ impl App {
     fn view_done(&mut self, ui: &mut egui::Ui) {
         ui.add_space(30.0);
         ui.vertical_centered(|ui| {
-            ui.heading("✅ Audiobook ready");
+            ui.heading(format!(
+                "{}  Audiobook ready",
+                egui_phosphor::regular::CHECK_CIRCLE
+            ));
             if let Some(path) = self.result_path.clone() {
                 ui.add_space(8.0);
                 ui.label(&path);
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Reveal in Finder").clicked() {
+                    if ui
+                        .button(format!(
+                            "{}  Reveal in Finder",
+                            egui_phosphor::regular::FOLDER_OPEN
+                        ))
+                        .clicked()
+                    {
                         let _ = pipeline::reveal_in_os(&path);
                     }
                     if ui.button("Make another").clicked() {
