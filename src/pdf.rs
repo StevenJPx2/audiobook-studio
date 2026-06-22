@@ -200,9 +200,19 @@ static HEADING: Lazy<Regex> = Lazy::new(|| {
 /// `(page_number_1indexed, heading_text)` for every heading line found, in page
 /// order. This is the reliable, model-free source of chapter divisions; the LLM
 /// refines/labels these rather than discovering them from scratch.
+///
+/// Two complementary signals are collected:
+/// 1. Keyword/numeral headings anywhere on a page (`Chapter 4`, `BOOK II`,
+///    `Introduction`), matched by `HEADING`.
+/// 2. Display-title headings: a page that *opens* with one to three consecutive
+///    ALL-CAPS lines (the chapter title set in large caps, often wrapped across
+///    lines), which carry no structural keyword or numeral. Common in trade
+///    non-fiction whose chapters are bare titles. Detected book-agnostically by
+///    shape (caps + page-top position), not by any specific text.
 pub fn chapter_headings(pages: &[String]) -> Vec<(usize, String)> {
     let mut out: Vec<(usize, String)> = Vec::new();
     for (i, page) in pages.iter().enumerate() {
+        // (1) Keyword/numeral headings anywhere on the page.
         for line in page.lines() {
             let line = line.trim();
             if line.is_empty() || line.chars().count() > 90 {
@@ -212,8 +222,70 @@ pub fn chapter_headings(pages: &[String]) -> Vec<(usize, String)> {
                 out.push((i + 1, line.to_string()));
             }
         }
+        // (2) Display-title heading at the very top of the page.
+        if let Some(title) = caps_title_at_top(page) {
+            // Avoid a duplicate if the same line was already caught by HEADING
+            // (e.g. an all-caps "INTRODUCTION").
+            if !out.iter().any(|(pg, t)| *pg == i + 1 && t.eq_ignore_ascii_case(&title)) {
+                out.push((i + 1, title));
+            }
+        }
     }
     out
+}
+
+/// Detect a large-caps display title at the top of a page: the first one to
+/// three non-empty lines are each predominantly UPPERCASE letters (a wrapped
+/// title like `WHAT IS A` / `WORLDVIEW?`), and the run is followed by a line
+/// that is NOT all-caps (the body, or a recurring series marker). Returns the
+/// joined title (`"WHAT IS A WORLDVIEW?"`) or `None`.
+///
+/// Book-agnostic: keys only on letter case and page-top position, never on
+/// specific words. Continuation pages (which begin mid-sentence in mixed case)
+/// produce no match, so only true chapter openers are flagged.
+fn caps_title_at_top(page: &str) -> Option<String> {
+    let lines: Vec<&str> = page
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect();
+    let mut title_lines: Vec<&str> = Vec::new();
+    for line in lines.iter().take(3) {
+        if is_caps_line(line) {
+            title_lines.push(line);
+        } else {
+            break;
+        }
+    }
+    if title_lines.is_empty() {
+        return None;
+    }
+    let title = title_lines.join(" ");
+    let collapsed = MULTISPACE.replace_all(title.trim(), " ").to_string();
+    // A real title has at least one letter and isn't absurdly long.
+    if collapsed.chars().any(|c| c.is_alphabetic()) && collapsed.chars().count() <= 90 {
+        Some(collapsed)
+    } else {
+        None
+    }
+}
+
+/// True if a line reads as part of a caps display title: it contains letters,
+/// every cased letter is uppercase, and it is short (a heading, not a shouted
+/// sentence). Digits, punctuation, and spaces are allowed (`SO,`, `WHAT NEXT?`).
+fn is_caps_line(line: &str) -> bool {
+    let letters: Vec<char> = line.chars().filter(|c| c.is_alphabetic()).collect();
+    if letters.len() < 2 {
+        return false;
+    }
+    // Every alphabetic char must be uppercase (no lowercase letters at all).
+    if line.chars().filter(|c| c.is_alphabetic()).any(|c| c.is_lowercase()) {
+        return false;
+    }
+    // Keep it heading-sized: at most ~9 words and 60 chars, so an all-caps
+    // emphatic sentence in body prose is never mistaken for a title.
+    let words = line.split_whitespace().count();
+    words <= 9 && line.chars().count() <= 60
 }
 
 /// Remove table-of-contents duplicates from a heading list. A book's TOC lists
@@ -736,6 +808,72 @@ mod tests {
         assert!(heads.is_empty(), "false-positive headings: {heads:?}");
     }
 
+    #[test]
+    fn detects_multiline_caps_display_titles() {
+        // Mirrors "Seeking Answers, Finding Truth": each chapter opens a page
+        // with a wrapped ALL-CAPS title, then a recurring series marker, then
+        // body prose. No structural keyword or numeral anywhere.
+        let pages = vec![
+            "WHAT IS A \nWORLDVIEW?\n\nSEEKiNG\n\nI woke up in the middle of the night."
+                .to_string(),
+            // Continuation page: opens mid-prose, mixed case -> NOT a heading.
+            "coherently from a set of axioms (or intermediate propositions). The third \
+             theory follows."
+                .to_string(),
+            "WHO IS \nJESUS?\n\nSEEKiNG\n\nThe very core of Christianity is the person of Jesus."
+                .to_string(),
+            "SO, \nWHAT NEXT?\n\nSEEKiNG\n\nWe have surveyed the evidence."
+                .to_string(),
+        ];
+        let heads = chapter_headings(&pages);
+        let texts: Vec<&str> = heads.iter().map(|(_, t)| t.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| *t == "WHAT IS A WORLDVIEW?"),
+            "wrapped caps title not joined/detected: {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|t| *t == "WHO IS JESUS?"),
+            "caps title missed: {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|t| *t == "SO, WHAT NEXT?"),
+            "caps title with punctuation missed: {texts:?}"
+        );
+        // The continuation page (page 2) must produce no heading.
+        assert!(
+            !heads.iter().any(|(pg, _)| *pg == 2),
+            "continuation page falsely flagged: {heads:?}"
+        );
+    }
+
+    #[test]
+    fn caps_detector_ignores_allcaps_body_and_short_markers() {
+        // A long shouted sentence in body prose is not a title; a bare 1-letter
+        // or recurring short marker alone should not register as a chapter.
+        let pages = vec![
+            "THIS IS A VERY LONG ALL CAPS SENTENCE THAT GOES ON AND ON BEYOND ANY \
+             REASONABLE HEADING LENGTH AND MUST NOT BE TREATED AS A CHAPTER TITLE AT ALL."
+                .to_string(),
+            "Ordinary opening prose that begins a continuation page in mixed case here."
+                .to_string(),
+        ];
+        let heads = chapter_headings(&pages);
+        assert!(
+            heads.is_empty(),
+            "all-caps body sentence falsely detected as heading: {heads:?}"
+        );
+    }
+
+    #[test]
+    fn caps_title_does_not_double_count_keyword_heading() {
+        // An all-caps "INTRODUCTION." is caught by HEADING; the caps detector
+        // must not add a duplicate for the same page.
+        let pages = vec!["INTRODUCTION.\n\nWhen on board the Beagle...".to_string()];
+        let heads = chapter_headings(&pages);
+        let on_p1 = heads.iter().filter(|(pg, _)| *pg == 1).count();
+        assert_eq!(on_p1, 1, "duplicate heading emitted: {heads:?}");
+    }
+
     /// Ignored corpus harness: scan a plain-text book (split into synthetic
     /// pages on form-feeds or blank-line groups) and print detected headings.
     /// Run e.g.:
@@ -758,3 +896,5 @@ mod tests {
         }
     }
 }
+
+

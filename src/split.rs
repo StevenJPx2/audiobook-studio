@@ -10,17 +10,21 @@ use std::path::{Path, PathBuf};
 pub fn boundaries_to_chapters(boundaries: &[Boundary], page_count: usize) -> Vec<Chapter> {
     let mut chapters = Vec::new();
     for (i, b) in boundaries.iter().enumerate() {
-        let start = b.start_page.max(1);
+        // Clamp start into [1, page_count] — the LLM can hallucinate pages past
+        // the end of the book (e.g. start_page 16 on a 12-page PDF).
+        let start = b.start_page.clamp(1, page_count.max(1));
         let end = if i + 1 < boundaries.len() {
-            boundaries[i + 1].start_page.saturating_sub(1).max(start)
+            boundaries[i + 1].start_page.saturating_sub(1)
         } else {
             page_count
         };
+        // Always keep end within the book and >= start so the range is valid.
+        let end = end.min(page_count).max(start);
         chapters.push(Chapter {
             order: i + 1,
             title: b.title.trim().to_string(),
             start_page: start,
-            end_page: end.min(page_count),
+            end_page: end,
         });
     }
     chapters
@@ -48,8 +52,11 @@ pub fn write_transcripts(
     std::fs::create_dir_all(out_dir)?;
     let mut result = Vec::new();
     for ch in chapters {
-        let lo = ch.start_page.saturating_sub(1);
-        let hi = ch.end_page.min(pages.len());
+        // Defensive: chapter page ranges come from LLM/boundary detection and
+        // can be inverted or out of bounds (e.g. start>end, start>page_count).
+        // Clamp both ends and ensure lo<=hi so we never slice out of range.
+        let lo = ch.start_page.saturating_sub(1).min(pages.len());
+        let hi = ch.end_page.min(pages.len()).max(lo);
         let slice = &pages[lo..hi];
         let body = pdf::clean_pages_to_transcript(slice);
         let full = format!("{book_title}\n{author}\n\n{}\n\n{body}\n", ch.title);

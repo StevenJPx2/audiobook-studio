@@ -5,9 +5,11 @@
 //! on a background thread with its own Tokio runtime.
 use crate::agent;
 use crate::bundle;
+use crate::cover;
 use crate::error::{AppError, AppResult};
 use crate::kokoro;
 use crate::model::{BookInfo, Boundary, Chapter, GenerateRequest, Progress};
+use crate::ocr;
 use crate::pdf;
 use crate::split;
 use std::path::{Path, PathBuf};
@@ -16,9 +18,122 @@ use std::time::Duration;
 /// A progress sink. The GUI passes a closure that forwards to its channel.
 pub type ProgressFn<'a> = dyn Fn(Progress) + Send + Sync + 'a;
 
+/// Per-book working directory for intermediates (transcripts, mp3s, cover,
+/// ffmpeg temp files). Lives under the OS cache dir so it never clutters the
+/// user's output folder, survives across runs (resume), and is OS-reclaimable.
+///   macOS:  ~/Library/Caches/audiobook-studio/<safe-title>/
+///   else:   $XDG_CACHE_HOME or ~/.cache, falling back to std::env::temp_dir().
+fn work_dir_for(book_title: &str) -> AppResult<PathBuf> {
+    let safe: String = book_title
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' { c } else { '_' })
+        .collect::<String>()
+        .trim()
+        .replace(' ', "_");
+    let safe = if safe.is_empty() { "untitled".to_string() } else { safe };
+
+    let root = cache_root().join("audiobook-studio");
+    Ok(root.join(safe))
+}
+
+/// Resolve the OS cache root.
+fn cache_root() -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home).join("Library/Caches");
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        if let Some(xdg) = std::env::var_os("XDG_CACHE_HOME") {
+            return PathBuf::from(xdg);
+        }
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home).join(".cache");
+        }
+    }
+    std::env::temp_dir()
+}
+
 /// Inspect a PDF: page count, size, embedded outline. Blocking (call off-thread).
 pub fn inspect_pdf(path: &str) -> AppResult<BookInfo> {
     pdf::info(path)
+}
+
+/// OCR render width. High enough that glm-ocr reads dense body text reliably
+/// without ballooning request size on a many-page scanned book.
+const OCR_RENDER_WIDTH: u16 = 1600;
+
+/// Extract page text, then OCR any page whose text layer is empty/near-empty
+/// (scanned pages) via the local glm-ocr vision model, splicing the recognized
+/// text back into the page slice. Non-fatal end to end: if the OCR model isn't
+/// available, or a page fails, that page keeps whatever (possibly empty) text it
+/// had and the pipeline continues. Both detection and generation extract pages
+/// through here so chapter detection and TTS see the same OCR-recovered text.
+async fn extract_pages_with_ocr(path: &str, progress: &ProgressFn<'_>) -> AppResult<Vec<String>> {
+    let path_owned = path.to_string();
+    let mut pages = tokio::task::spawn_blocking(move || pdf::pages(&path_owned))
+        .await
+        .map_err(|e| AppError::Other(e.to_string()))??;
+
+    let empties = ocr::empty_page_indices(&pages);
+    if empties.is_empty() {
+        return Ok(pages);
+    }
+
+    // Only OCR if the model is actually pulled locally; otherwise skip silently
+    // (the book may simply have a few legitimately blank pages).
+    let ocr_model = ocr::model();
+    if !ocr::available(&ocr_model).await {
+        eprintln!(
+            "[ocr] {} page(s) have no text layer but '{ocr_model}' is unavailable; skipping OCR",
+            empties.len()
+        );
+        return Ok(pages);
+    }
+
+    let total = empties.len() as u32;
+    progress(Progress::new(
+        "ocr",
+        format!("OCR: {total} scanned page(s) with {ocr_model}…"),
+        0,
+        total,
+    ));
+    for (done, &idx) in empties.iter().enumerate() {
+        let page_no = (idx + 1) as u16;
+        progress(Progress::new(
+            "ocr",
+            format!("OCR page {page_no}…"),
+            done as u32,
+            total,
+        ));
+        // Render the page to PNG bytes off-thread (pdfium is blocking).
+        let path_for_render = path.to_string();
+        let render = tokio::task::spawn_blocking(move || {
+            cover::render_page_png_bytes(&path_for_render, page_no, OCR_RENDER_WIDTH)
+        })
+        .await
+        .map_err(|e| AppError::Other(e.to_string()));
+        let bytes = match render {
+            Ok(Ok(b)) => b,
+            Ok(Err(e)) => {
+                eprintln!("[ocr] render page {page_no} failed: {e}; skipping");
+                continue;
+            }
+            Err(e) => {
+                eprintln!("[ocr] render task page {page_no} failed: {e}; skipping");
+                continue;
+            }
+        };
+        match ocr::ocr_image(&ocr_model, &bytes).await {
+            Ok(text) if !text.trim().is_empty() => pages[idx] = text,
+            Ok(_) => eprintln!("[ocr] page {page_no} returned empty text"),
+            Err(e) => eprintln!("[ocr] page {page_no} failed: {e}; keeping original"),
+        }
+    }
+    progress(Progress::new("ocr", "OCR complete", total, total));
+    Ok(pages)
 }
 
 /// List locally available Ollama model tags for the picker.
@@ -70,10 +185,7 @@ pub async fn detect_chapters(
     progress: &ProgressFn<'_>,
 ) -> AppResult<Vec<Chapter>> {
     progress(Progress::new("extract", "Reading PDF…", 0, 1));
-    let path_owned = path.to_string();
-    let pages = tokio::task::spawn_blocking(move || pdf::pages(&path_owned))
-        .await
-        .map_err(|e| AppError::Other(e.to_string()))??;
+    let pages = extract_pages_with_ocr(path, progress).await?;
     let page_count = pages.len();
     progress(Progress::new(
         "extract",
@@ -163,19 +275,24 @@ pub async fn generate_audiobook(
 
     std::fs::create_dir_all(&out_dir)?;
 
-    // 1) Extract pages + write transcripts.
+    // Intermediates (transcripts, per-chapter mp3s, cover, ffmpeg temp files)
+    // live in a per-book cache dir, NOT the user's output directory — that way
+    // the user dir ends up with only the final .m4b, while the cache survives
+    // across runs so re-running skips already-rendered chapters (resume).
+    let work_dir = work_dir_for(&book_title)?;
+    std::fs::create_dir_all(&work_dir)?;
+
+    // 1) Extract pages + write transcripts (into the work dir).
     progress(Progress::new(
         "split",
         "Building transcripts…",
         0,
         chapters.len() as u32,
     ));
-    let pdf_path2 = pdf_path.clone();
-    let pages = tokio::task::spawn_blocking(move || pdf::pages(&pdf_path2))
-        .await
-        .map_err(|e| AppError::Other(e.to_string()))??;
+    let pages = extract_pages_with_ocr(&pdf_path, progress).await?;
 
-    let transcripts = split::write_transcripts(&pages, &chapters, &out_dir, &book_title, &author)?;
+    let transcripts =
+        split::write_transcripts(&pages, &chapters, &work_dir.to_string_lossy(), &book_title, &author)?;
     progress(Progress::new(
         "split",
         "Transcripts ready",
@@ -189,7 +306,7 @@ pub async fn generate_audiobook(
     if polish && ollama_reachable().await {
         let model = polish_model
             .clone()
-            .unwrap_or_else(|| "gemma4:e2b".to_string());
+            .unwrap_or_else(|| "gemma4:e2b-mlx".to_string());
         let total = transcripts.len() as u32;
         for (i, (ch, txt_path)) in transcripts.iter().enumerate() {
             progress(Progress::new(
@@ -210,15 +327,16 @@ pub async fn generate_audiobook(
         ));
     }
 
-    // 2) Ensure the Kokoro sidecar is up.
-    progress(Progress::new("tts", "Waiting for Kokoro sidecar…", 0, 1));
-    kokoro::wait_until_ready(Duration::from_secs(120)).await?;
+    // 2) Ensure the G2P sidecar is up + the TTS model is warm.
+    progress(Progress::new("tts", "Loading voice model…", 0, 1));
+    kokoro::wait_until_ready(Duration::from_secs(180)).await?;
 
     // 3) Synthesize each chapter (resumable: skip already-rendered MP3s).
     let total = transcripts.len() as u32;
     let mut mp3s: Vec<PathBuf> = Vec::with_capacity(transcripts.len());
+    let work_dir_s = work_dir.to_string_lossy().to_string();
     for (i, (ch, txt_path)) in transcripts.iter().enumerate() {
-        let mp3 = Path::new(&out_dir).join(format!("{}.mp3", split::file_stem(ch)));
+        let mp3 = work_dir.join(format!("{}.mp3", split::file_stem(ch)));
         progress(Progress::new(
             "tts",
             format!("Narrating: {}", ch.title),
@@ -236,24 +354,39 @@ pub async fn generate_audiobook(
     }
     progress(Progress::new("tts", "All chapters narrated", total, total));
 
-    // 3.5) Cover art: render PDF page 1 unless a cover was already supplied.
-    let has_cover = ["cover.jpg", "cover.jpeg", "cover.png"]
+    // 3.5) Cover art: render PDF page 1 into the work dir, unless the user
+    // supplied a cover next to the output (out_dir) or it's already cached.
+    let cover_names = ["cover.jpg", "cover.jpeg", "cover.png"];
+    let user_cover = cover_names
         .iter()
-        .any(|n| Path::new(&out_dir).join(n).exists());
+        .map(|n| Path::new(&out_dir).join(n))
+        .find(|p| p.exists());
+    if let Some(uc) = &user_cover {
+        // Honor a user-supplied cover by copying it into the work dir.
+        let _ = std::fs::copy(uc, work_dir.join("cover.jpg"));
+    }
+    let has_cover = cover_names.iter().any(|n| work_dir.join(n).exists());
     if !has_cover {
         progress(Progress::new("bundle", "Rendering cover…", 0, 1));
-        let cover_path = Path::new(&out_dir).join("cover.jpg");
-        if let Err(e) = kokoro::generate_cover(&pdf_path, &cover_path.to_string_lossy(), 1).await {
+        let cover_path = work_dir.join("cover.jpg");
+        let pdf_c = pdf_path.clone();
+        let cover_c = cover_path.to_string_lossy().to_string();
+        let res = tokio::task::spawn_blocking(move || {
+            crate::cover::render(&pdf_c, &cover_c, 1, 1024)
+        })
+        .await;
+        if let Err(e) = res.map_err(|e| AppError::Other(e.to_string())).and_then(|r| r) {
             eprintln!("[cover] skipped ({e})"); // non-fatal
         }
     }
 
-    // 4) Bundle into .m4b.
+    // 4) Bundle into .m4b — intermediates from the work dir, final file to the
+    // user's out_dir (so the user directory contains only the .m4b).
     progress(Progress::new("bundle", "Bundling .m4b…", 0, 1));
     let safe_title = book_title.replace('/', "-");
     let out_file = Path::new(&out_dir).join(format!("{safe_title} (Audiobook).m4b"));
     let chapters_for_bundle = chapters.clone();
-    let out_dir_b = out_dir.clone();
+    let work_dir_b = work_dir_s.clone();
     let title_b = book_title.clone();
     let author_b = author.clone();
     let out_file_b = out_file.clone();
@@ -261,7 +394,7 @@ pub async fn generate_audiobook(
         bundle::build_m4b(
             &mp3s,
             &chapters_for_bundle,
-            &out_dir_b,
+            &work_dir_b,
             &out_file_b,
             &title_b,
             &author_b,

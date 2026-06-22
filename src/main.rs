@@ -6,16 +6,20 @@
 mod agent;
 mod app;
 mod bundle;
+mod cover;
 mod error;
+mod g2p;
 mod kokoro;
 mod model;
+mod ocr;
 mod pdf;
 mod pipeline;
 mod sidecar;
 mod split;
+mod tts;
 
 fn main() -> eframe::Result<()> {
-    // Start the Kokoro sidecar early so it's warm by the time TTS runs.
+    // Warm the G2P sidecar early (background) so it's ready by the time TTS runs.
     sidecar::spawn_sidecar();
 
     let options = eframe::NativeOptions {
@@ -25,7 +29,7 @@ fn main() -> eframe::Result<()> {
             .with_title("Audiobook Studio"),
         ..Default::default()
     };
-    eframe::run_native(
+    let result = eframe::run_native(
         "Audiobook Studio",
         options,
         Box::new(|cc| {
@@ -36,5 +40,9 @@ fn main() -> eframe::Result<()> {
             cc.egui_ctx.set_fonts(fonts);
             Ok(Box::<app::App>::default())
         }),
-    )
+    );
+
+    // Clean teardown of the persistent G2P child process on exit.
+    g2p::shutdown();
+    result
 }

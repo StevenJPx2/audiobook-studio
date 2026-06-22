@@ -1,21 +1,26 @@
 [project]
 name = "audiobook-studio-sidecar"
-version = "0.1.0"
-description = "Kokoro TTS sidecar for Audiobook Studio (FastAPI)."
+version = "0.2.0"
+description = "Slim G2P sidecar for Audiobook Studio (misaki, no torch). TTS runs natively in Rust."
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "kokoro>=0.9.4",
     "misaki[en]>=0.9.4",
-    "soundfile>=0.12",
-    "numpy>=1.26",
-    "fastapi>=0.115",
-    "uvicorn>=0.30",
-    "pydantic>=2.7",
-    "pymupdf>=1.24",
+    # spaCy's CLI imports click but doesn't always declare it as a hard dep.
+    "click>=8.1",
 ]
 
-# Run with:  uv run kokoro_server.py --warm
-# uv creates/syncs an isolated env from this spec on demand — no manual venv,
-# and it just re-syncs if the project is moved or freshly cloned.
+# Run with:  uv run g2p_server.py
+# uv creates/syncs an isolated env from this spec on demand — no manual venv.
+#
+# misaki's English extra pulls in torch + a transformer POS model, but we use
+# the perceptron tagger (trf=False), which needs neither. Exclude them so the
+# env stays small (~200MB vs ~1GB) and torch-free. espeak-ng must be present on
+# the system PATH (used as the OOV fallback phonemizer).
 [tool.uv]
 package = false
+override-dependencies = [
+    "torch ; sys_platform == 'never'",
+    "spacy-curated-transformers ; sys_platform == 'never'",
+    "curated-transformers ; sys_platform == 'never'",
+    "curated-tokenizers ; sys_platform == 'never'",
+]

@@ -200,6 +200,40 @@ impl App {
         });
     }
 
+    /// Re-derive `order` and `end_page` after any edit (add/delete/reorder/
+    /// start-page change), keeping the chapter list internally consistent.
+    /// Chapters stay in the user's list order; `order` is 1-based list position
+    /// and each chapter runs from its `start_page` to the page before the next
+    /// chapter's `start_page` (the last chapter ends at the final page). Start
+    /// pages are clamped to `1..=page_count`.
+    fn recompute_chapters(&mut self) {
+        let page_count = self.book.as_ref().map(|b| b.page_count).unwrap_or(0).max(1);
+        let n = self.chapters.len();
+        for (i, ch) in self.chapters.iter_mut().enumerate() {
+            ch.order = i + 1;
+            ch.start_page = ch.start_page.clamp(1, page_count);
+        }
+        for i in 0..n {
+            let end = if i + 1 < n {
+                self.chapters[i + 1].start_page.saturating_sub(1)
+            } else {
+                page_count
+            };
+            // Never let a row's end fall before its own start (e.g. the next
+            // chapter starts on the same/earlier page); show at least one page.
+            let start = self.chapters[i].start_page;
+            self.chapters[i].end_page = end.max(start);
+        }
+    }
+
+    /// Do the chapters' start pages run strictly increasing? If not, the table
+    /// shows a non-fatal warning so the user can fix ordering before generating.
+    fn chapters_ordered(&self) -> bool {
+        self.chapters
+            .windows(2)
+            .all(|w| w[0].start_page < w[1].start_page)
+    }
+
     /// Drain background messages once per frame.
     fn pump(&mut self) {
         while let Ok(msg) = self.rx.try_recv() {
@@ -231,6 +265,7 @@ impl App {
                 Msg::Chapters(chs) => {
                     self.busy = false;
                     self.chapters = chs;
+                    self.recompute_chapters();
                     self.stage = Stage::Review;
                 }
                 Msg::Done(path) => {
@@ -313,8 +348,18 @@ impl App {
         ui.vertical_centered(|ui| {
             if self.busy {
                 ui.spinner();
-                ui.label(&self.status);
-                ui.weak("Extracting and analyzing pages. Large books can take a moment.");
+                // Surface live detection progress (page extraction, OCR of
+                // scanned pages, boundary detection) so a large/scanned book
+                // doesn't look frozen.
+                if let Some(p) = &self.progress {
+                    ui.label(format!("{} · {}", p.stage, p.message));
+                    if p.total > 1 {
+                        ui.weak(format!("{}/{}", p.current, p.total));
+                    }
+                } else {
+                    ui.label(&self.status);
+                }
+                ui.weak("Extracting and analyzing pages. Scanned books are OCR'd and can take a while.");
             } else {
                 ui.heading("Drop a book PDF here");
                 ui.label("A local model finds the chapters; Kokoro narrates them.");
@@ -341,33 +386,143 @@ impl App {
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.heading("Chapters");
             ui.weak(format!(
-                "{} chapters detected. Edit titles; page ranges follow the boundaries.",
+                "{} chapters. Rename, reorder, set each chapter's start page, add or delete rows. End pages follow the next chapter's start.",
                 self.chapters.len()
             ));
             ui.add_space(6.0);
-            // Give the title column a generous, fixed width so the edit boxes
-            // don't shrink to their content (which truncated titles to a few
-            // characters). The box also grows with the window via the fraction.
-            let title_w = (ui.available_width() - 160.0).clamp(220.0, 560.0);
-            egui::Grid::new("chapters")
-                .striped(true)
-                .num_columns(3)
-                .min_col_width(40.0)
-                .spacing([12.0, 6.0])
-                .show(ui, |ui| {
-                    ui.strong("#");
-                    ui.strong("Title");
-                    ui.strong("Pages");
-                    ui.end_row();
-                    for ch in &mut self.chapters {
-                        ui.label(ch.order.to_string());
-                        ui.add(
-                            egui::TextEdit::singleline(&mut ch.title).desired_width(title_w),
-                        );
-                        ui.label(format!("{}–{}", ch.start_page, ch.end_page));
-                        ui.end_row();
+
+            let page_count = self.book.as_ref().map(|b| b.page_count).unwrap_or(0).max(1);
+
+            // Fixed-width columns so controls line up across rows:
+            // move(↑↓) | # | title | start-page | –end | delete.
+            const MOVE_W: f32 = 24.0;
+            const NUM_W: f32 = 24.0;
+            const START_W: f32 = 64.0;
+            const END_W: f32 = 56.0;
+            const DEL_W: f32 = 28.0;
+            const GAP: f32 = 8.0;
+            let fixed = MOVE_W * 2.0 + NUM_W + START_W + END_W + DEL_W + GAP * 7.0;
+            let title_w = (ui.available_width() - fixed).clamp(140.0, 560.0);
+
+            ui.horizontal(|ui| {
+                ui.add_sized([MOVE_W * 2.0 + GAP, 16.0], egui::Label::new(""));
+                ui.add_sized([NUM_W, 16.0], egui::Label::new(egui::RichText::new("#").strong()));
+                ui.add_sized([title_w, 16.0], egui::Label::new(egui::RichText::new("Title").strong()));
+                ui.add_sized([START_W, 16.0], egui::Label::new(egui::RichText::new("Start").strong()));
+                ui.add_sized([END_W, 16.0], egui::Label::new(egui::RichText::new("End").strong()));
+            });
+
+            // Edits are deferred: we can't mutate self.chapters while iterating.
+            let mut move_up: Option<usize> = None;
+            let mut move_down: Option<usize> = None;
+            let mut delete: Option<usize> = None;
+            let mut dirty = false;
+            let n = self.chapters.len();
+
+            for i in 0..n {
+                let ch = &mut self.chapters[i];
+                ui.horizontal(|ui| {
+                    // Reorder controls (disabled at the ends).
+                    if ui
+                        .add_enabled(
+                            i > 0,
+                            egui::Button::new(egui_phosphor::regular::CARET_UP).small(),
+                        )
+                        .on_hover_text("Move up")
+                        .clicked()
+                    {
+                        move_up = Some(i);
+                    }
+                    if ui
+                        .add_enabled(
+                            i + 1 < n,
+                            egui::Button::new(egui_phosphor::regular::CARET_DOWN).small(),
+                        )
+                        .on_hover_text("Move down")
+                        .clicked()
+                    {
+                        move_down = Some(i);
+                    }
+                    ui.add_sized([NUM_W, 22.0], egui::Label::new(ch.order.to_string()));
+                    ui.add_sized([title_w, 22.0], egui::TextEdit::singleline(&mut ch.title));
+                    // Editable start page.
+                    if ui
+                        .add_sized(
+                            [START_W, 22.0],
+                            egui::DragValue::new(&mut ch.start_page)
+                                .range(1..=page_count)
+                                .speed(0.2),
+                        )
+                        .changed()
+                    {
+                        dirty = true;
+                    }
+                    ui.add_sized(
+                        [END_W, 22.0],
+                        egui::Label::new(egui::RichText::new(ch.end_page.to_string()).weak()),
+                    );
+                    if ui
+                        .add_enabled(
+                            n > 1,
+                            egui::Button::new(egui_phosphor::regular::TRASH).small(),
+                        )
+                        .on_hover_text("Delete chapter")
+                        .clicked()
+                    {
+                        delete = Some(i);
                     }
                 });
+            }
+
+            // Apply at most one structural edit this frame, then recompute.
+            if let Some(i) = move_up {
+                self.chapters.swap(i, i - 1);
+                dirty = true;
+            } else if let Some(i) = move_down {
+                self.chapters.swap(i, i + 1);
+                dirty = true;
+            } else if let Some(i) = delete {
+                self.chapters.remove(i);
+                dirty = true;
+            }
+
+            ui.add_space(4.0);
+            if ui
+                .button(format!(
+                    "{}  Add chapter",
+                    egui_phosphor::regular::PLUS_CIRCLE
+                ))
+                .clicked()
+            {
+                // New chapter starts after the current last one (or page 1).
+                let start = self
+                    .chapters
+                    .last()
+                    .map(|c| (c.start_page + 1).min(page_count))
+                    .unwrap_or(1);
+                self.chapters.push(Chapter {
+                    order: self.chapters.len() + 1,
+                    title: "New Chapter".to_string(),
+                    start_page: start,
+                    end_page: page_count,
+                });
+                dirty = true;
+            }
+
+            if dirty {
+                self.recompute_chapters();
+            }
+
+            if !self.chapters_ordered() {
+                ui.add_space(4.0);
+                ui.colored_label(
+                    egui::Color32::from_rgb(0xD9, 0x8A, 0x2B),
+                    format!(
+                        "{}  Start pages aren't strictly increasing — chapters will overlap. Reorder or fix start pages.",
+                        egui_phosphor::regular::WARNING
+                    ),
+                );
+            }
 
             ui.add_space(12.0);
             ui.heading("Narration");
@@ -528,9 +683,13 @@ fn voice_label(id: &str) -> String {
         .unwrap_or_else(|| id.to_string())
 }
 
-/// Prefer small/fast instruct models for structured extraction.
+/// Prefer small/fast instruct models for structured extraction. On Apple
+/// Silicon the MLX build (`gemma4:e2b-mlx`) is Metal-accelerated, so it's the
+/// top preference; the most specific tag must come first because matching is by
+/// substring (`gemma4:e2b` also matches `gemma4:e2b-mlx`).
 fn pick_model_default(models: &[String]) -> String {
     for pref in [
+        "gemma4:e2b-mlx",
         "gemma4:e2b",
         "gemma",
         "llama",
@@ -547,6 +706,41 @@ fn pick_model_default(models: &[String]) -> String {
 
 fn title_from_filename(name: &str) -> String {
     name.trim_end_matches(".pdf").replace(['_', '-'], " ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prefers_mlx_gemma_when_both_present() {
+        // Both the MLX and plain builds are pulled; the Metal-accelerated MLX
+        // tag must win regardless of list order (substring matching means
+        // "gemma4:e2b" alone would otherwise match either one).
+        let models = vec![
+            "gemma4:e2b".to_string(),
+            "gemma4:e2b-mlx".to_string(),
+            "llama2:latest".to_string(),
+        ];
+        assert_eq!(pick_model_default(&models), "gemma4:e2b-mlx");
+
+        // Order-independent.
+        let models_rev = vec![
+            "gemma4:e2b-mlx".to_string(),
+            "gemma4:e2b".to_string(),
+        ];
+        assert_eq!(pick_model_default(&models_rev), "gemma4:e2b-mlx");
+    }
+
+    #[test]
+    fn falls_back_to_plain_gemma_then_first() {
+        // No MLX build: plain gemma is acceptable.
+        let only_plain = vec!["gemma4:e2b".to_string(), "llama2:latest".to_string()];
+        assert_eq!(pick_model_default(&only_plain), "gemma4:e2b");
+        // None of the preferred families: first model wins.
+        let other = vec!["phi3:mini".to_string()];
+        assert_eq!(pick_model_default(&other), "phi3:mini");
+    }
 }
 
 fn default_out_dir(pdf_path: &str) -> String {

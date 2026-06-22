@@ -10,8 +10,14 @@ pub enum AppError {
     #[error("LLM error: {0}")]
     Llm(String),
 
-    #[error("Kokoro sidecar error: {0}")]
+    #[error("G2P sidecar error: {0}")]
     Sidecar(String),
+
+    #[error("TTS error: {0}")]
+    Tts(String),
+
+    #[error("OCR error: {0}")]
+    Ocr(String),
 
     #[error("ffmpeg error: {0}")]
     Ffmpeg(String),

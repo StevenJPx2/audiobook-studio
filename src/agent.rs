@@ -50,14 +50,34 @@ pub fn build_candidates(
             s.push_str(&format!("{pg}: {h}\n"));
         }
     }
-    // Fall back to page openings only when we have no stronger signal.
-    if outline.is_empty() && headings.is_empty() {
-        s.push_str("PAGE OPENINGS (page: first line):\n");
+    // Fall back to page openings when we have no stronger signal — OR when the
+    // strong signals are too sparse to divide the book. A handful of detected
+    // headings across many pages (e.g. a single "Conclusion" in a 19-page book
+    // whose chapters are display-titles the detector under-counts) would
+    // otherwise starve the model. Including page openings as a safety net lets
+    // the LLM recover the real chapters; it still prefers the explicit headings.
+    let weak_outline = outline.len() < 2;
+    let weak_headings = headings_too_sparse(headings, page_heads.len());
+    if weak_outline && weak_headings && !page_heads.is_empty() {
+        s.push_str("\nPAGE OPENINGS (page: first line):\n");
         for (pg, head) in page_heads {
             s.push_str(&format!("{pg}: {head}\n"));
         }
     }
     s
+}
+
+/// Heuristic: are the detected headings too few to plausibly be the book's
+/// chapter list, given its length? Fewer than two headings is always weak; for
+/// longer books, fewer than one heading per ~12 pages suggests the detector
+/// missed display-title chapters, so we should also offer page openings.
+fn headings_too_sparse(headings: &[(usize, String)], page_count: usize) -> bool {
+    if headings.len() < 2 {
+        return true;
+    }
+    // Roughly: expect at least one heading per 12 pages for a chaptered book.
+    let expected = (page_count / 12).max(2);
+    headings.len() < expected
 }
 
 /// Run boundary detection. `model` is an Ollama model tag (e.g. "gemma4:e2b").
@@ -168,27 +188,29 @@ fn parse_boundaries(raw: &str) -> AppResult<Vec<Boundary>> {
 
 // ---------- Optional transcript polish pass ----------
 
-const POLISH_SYSTEM: &str = "You are a careful text cleaner preparing a book \
-transcript for text-to-speech narration. You will receive a passage of prose \
-extracted from a PDF. Your ONLY job is to remove non-prose artifacts and fix \
-spacing so it reads aloud cleanly. \
-STRICT RULES: \
-(1) Do NOT rewrite, paraphrase, summarize, translate, or add words. Keep the \
-author's exact wording and sentence order. \
-(2) DELETE non-prose lines that should not be narrated: stray page numbers, \
-running headers/footers, footnote/endnote markers and footnote text, \
-figure/table labels, and math symbols or formula fragments. \
-(3) DELETE front-matter and cover/title-page boilerplate when present at the \
-very start: the title and subtitle, author/translator/edition credits, \
-publisher or e-book/source attributions, dedication or epigraph fragments, and \
-isolated heading fragments left over from page breaks. Keep genuine body \
-sentences. \
-(4) FIX obvious extraction glitches: words split by a hyphen across a line break, \
-doubled spaces, and missing spaces between words. \
-(5) Preserve all real sentences verbatim. If a passage is already clean, return \
-it unchanged. \
-Return ONLY the cleaned prose as plain text — no preamble, no commentary, no \
-markdown, no quotes around it.";
+const POLISH_SYSTEM: &str = "You repair character-level extraction glitches in a \
+book passage so it reads aloud cleanly in text-to-speech. You will receive prose \
+extracted from a PDF. You make ONLY mechanical character fixes — you are NOT an \
+editor. \
+WHAT TO FIX: \
+(1) Broken ligatures and mojibake: e.g. 'ﬁ'->'fi', 'ﬂ'->'fl', garbled accented \
+letters, stray control characters, and obvious OCR letter errors (e.g. 'rn'->'m' \
+only when unmistakable). \
+(2) Words split by a hyphen across a line break: rejoin them (e.g. 'exam-\\nple' \
+-> 'example'). \
+(3) Spacing only: collapse doubled spaces and insert a missing space between two \
+run-together words. \
+ABSOLUTE RULES — violating any means failure: \
+(A) PRESERVE EVERY WORD and the sentence order exactly. Do NOT rewrite, \
+paraphrase, summarize, translate, shorten, or add words. \
+(B) PRESERVE ALL PUNCTUATION EXACTLY — every period, comma, colon, semicolon, \
+question mark, exclamation mark, quote, and apostrophe must remain. NEVER remove \
+or add sentence punctuation. \
+(C) Do NOT delete lines, headings, or any content. Removal of artifacts is \
+handled elsewhere — your job is only character repair. \
+(D) If the passage has no character glitches, return it completely UNCHANGED. \
+Return ONLY the repaired prose as plain text — no preamble, commentary, markdown, \
+or surrounding quotes.";
 
 /// Roughly how many characters of transcript to send per LLM request. Small
 /// enough to stay well within a local model's context and keep each round trip
@@ -259,10 +281,23 @@ fn accept_polish(original: &str, cleaned: &str) -> bool {
     if o == 0.0 {
         return false;
     }
+    // Polish is now a character-repair pass (fix ligatures/spacing/hyphenation),
+    // so length should barely change. A tight band rejects rewrites/summaries.
     let ratio = c / o;
-    // Allow shrinking down to 80% (artifact removal) and a tiny 5% growth
-    // (e.g. inserting a missing space). Outside that band, distrust it.
-    (0.80..=1.05).contains(&ratio)
+    if !(0.90..=1.05).contains(&ratio) {
+        return false;
+    }
+    // Punctuation-preservation guard: a char-repair pass must NOT drop sentence
+    // punctuation. The earlier regression stripped every comma/period while
+    // keeping word count, so a length check alone missed it. Require the
+    // polished text to retain ~all of the original's punctuation.
+    let count_punct = |s: &str| s.chars().filter(|c| matches!(c, '.' | ',' | ':' | ';' | '?' | '!')).count();
+    let op = count_punct(original) as f64;
+    let cp = count_punct(cleaned) as f64;
+    if op > 0.0 && cp / op < 0.90 {
+        return false;
+    }
+    true
 }
 
 async fn polish_chunk(model: &str, chunk: &str) -> AppResult<String> {
@@ -418,13 +453,13 @@ mod polish_tests {
 
     #[test]
     fn accept_polish_guards_against_rewrite_and_summarize() {
-        let original = "The quick brown fox jumps over the lazy dog.";
+        let original = "The quick, brown fox jumps over the lazy dog; it was fast.";
         // identical -> accept
         assert!(accept_polish(original, original));
-        // small deletion (artifact removal) -> accept
+        // pure character repair (ligature fix), punctuation intact -> accept
         assert!(accept_polish(
             original,
-            "The quick brown fox jumps over the lazy dog"
+            "The quick, brown fox jumps over the lazy dog; it was fast."
         ));
         // summarized to a fraction -> reject
         assert!(!accept_polish(original, "A fox jumps."));
@@ -433,6 +468,40 @@ mod polish_tests {
         // ballooned (hallucinated additions) -> reject
         let bloated = original.repeat(3);
         assert!(!accept_polish(original, &bloated));
+    }
+
+    #[test]
+    fn build_candidates_adds_page_openings_when_headings_sparse() {
+        // A 19-page book with a single detected heading (the Seeking case):
+        // page openings must be offered as a safety net so the LLM can divide.
+        let headings = vec![(14, "Conclusion".to_string())];
+        let page_heads: Vec<(usize, String)> =
+            (1..=19).map(|i| (i, format!("opening line {i}"))).collect();
+        let s = build_candidates(&[], &headings, &page_heads);
+        assert!(
+            s.contains("PAGE OPENINGS"),
+            "sparse headings should trigger page-openings fallback:\n{s}"
+        );
+        // Strong heading list (>= one per ~12 pages) should NOT need the fallback.
+        let strong: Vec<(usize, String)> =
+            (1..=6).map(|i| (i * 3, format!("CHAPTER {i}"))).collect();
+        let s2 = build_candidates(&[], &strong, &page_heads);
+        assert!(
+            !s2.contains("PAGE OPENINGS"),
+            "strong heading list should not add page openings:\n{s2}"
+        );
+    }
+
+    #[test]
+    fn accept_polish_rejects_punctuation_stripping() {
+        // The real regression: same words, punctuation removed. Word count and
+        // length barely change, but every comma/period/semicolon is gone.
+        let original = "There are two ways, one of life, and one of death; a great difference.";
+        let stripped = "There are two ways one of life and one of death a great difference";
+        assert!(
+            !accept_polish(original, stripped),
+            "must reject punctuation-stripped output"
+        );
     }
 }
 

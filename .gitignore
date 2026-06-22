@@ -25,3 +25,6 @@ Thumbs.db
 *.log
 .meta.ffmeta
 .concat.txt
+
+# ── Vendored native libs (downloaded, not source; bundled into the .app) ──
+vendor/
