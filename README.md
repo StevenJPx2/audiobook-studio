@@ -27,16 +27,42 @@ reviewable/editable in the app before any audio is generated.
 
 ## Prerequisites
 
+macOS / Apple Silicon only (MLX requirement).
+
 | Tool | Why | Install (macOS) |
 |------|-----|-----------------|
-| **Rust** ≥ 1.77 | the app | `brew install rust` or rustup |
-| **Ollama** | local LLM | `brew install ollama` then `ollama pull gemma4:e2b` |
-| **uv** | Python env for sidecar | `brew install uv` |
-| **ffmpeg + espeak-ng** | audio + phonemes | `brew install ffmpeg espeak-ng` |
+| **Rust** ≥ 1.77 | building the app/CLI | `brew install rust` or rustup |
+| **Ollama** | local LLM (chapters, OCR, polish) | `brew install ollama`, then `ollama pull gemma4:e2b-mlx` (+ `glm-ocr:q8_0` for scanned PDFs) |
+| **uv** | Python env for the G2P sidecar (dev only) | `brew install uv` |
+| **ffmpeg** | audio assembly + .m4b encode | `brew install ffmpeg` |
 
-> uv manages its own Python 3.12 toolchain, so you don't need a system Python.
-> On Linux you'll also need the usual eframe build deps (GTK/X11/GL) — see the
-> `app` job in `.github/workflows/ci.yml` for the exact apt packages.
+> uv manages its own Python 3.12 toolchain — no system Python needed.
+> espeak-ng is **not** required: the G2P sidecar bundles its own libespeak-ng via
+> `espeakng_loader`. In a packaged build the sidecar is frozen to a standalone
+> binary (no Python/uv at runtime).
+
+## Install the CLI (`abs`)
+
+Homebrew (Apple Silicon):
+
+```bash
+brew install StevenJPx2/audiobook-studio/audiobook-studio
+abs doctor        # checks Ollama, models, ffmpeg, libpdfium, sidecar
+```
+
+Or from source (installs to `~/.cargo/bin`, with the frozen sidecar + libpdfium
+placed beside it):
+
+```bash
+./scripts/install-cli.sh
+```
+
+CLI usage:
+
+```bash
+abs detect --pdf book.pdf --json > ch.json     # detect chapters (review/edit)
+abs generate --pdf book.pdf --out ./out --chapters ch.json
+```
 
 ## Setup
 
@@ -46,7 +72,7 @@ reviewable/editable in the app before any audio is generated.
 
 # 2) Make sure Ollama is running with a model
 ollama serve &                    # if not already running
-ollama pull gemma4:e2b            # fast; or use gemma4:latest for higher quality
+ollama pull gemma4:e2b-mlx        # Metal-accelerated; default detection/polish model
 ```
 
 ## Run (dev)
@@ -55,21 +81,30 @@ ollama pull gemma4:e2b            # fast; or use gemma4:latest for higher qualit
 cargo run
 ```
 
-The app **auto-launches the Kokoro sidecar** via `uv run` on startup (it
-preloads the British pipeline, so the first launch takes ~20–40 s), and reuses
-an already-running sidecar instead of fighting for the port. uv keeps the env
-in sync from `uv.lock`, so a moved or freshly-cloned project just works. You can
+The app **auto-launches the G2P sidecar** via `uv run` on startup (it preloads
+the British misaki pipeline, ~4 s) and reuses a running one. uv keeps the env in
+sync from `uv.lock`, so a moved or freshly-cloned project just works. You can
 also run the sidecar manually:
 
 ```bash
-cd sidecar && uv run kokoro_server.py --warm
+cd sidecar && uv run g2p_server.py
 ```
 
 ## Build (release)
 
 ```bash
-cargo build --release    # binary at target/release/audiobook-studio
+cargo build --release    # GUI: target/release/audiobook-studio · CLI: target/release/abs
 ```
+
+## Package a distributable `.app` / CLI
+
+```bash
+./scripts/build-app.sh            # unsigned dist-app/Audiobook Studio.app (self-contained)
+./scripts/package-cli-tarball.sh  # dist-cli/abs-<ver>-macos-arm64.tar.gz (for Homebrew)
+```
+
+See **BUNDLING.md** for the asset map, the frozen-sidecar approach, offline
+model embedding, and the deferred codesign/notarize steps.
 
 ## Cover art
 
