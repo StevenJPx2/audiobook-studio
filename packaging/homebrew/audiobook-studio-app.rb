@@ -17,7 +17,7 @@ cask "audiobook-studio-app" do
   desc "Turn a book PDF into a chaptered .m4b audiobook (local LLM + Kokoro TTS)"
   homepage "https://github.com/StevenJPx2/audiobook-studio"
 
-  depends_on macos: ">= :ventura"
+  depends_on macos: :ventura
   depends_on arch: :arm64
   depends_on formula: "ffmpeg"
 

@@ -14,7 +14,7 @@ APP="dist-app/Audiobook Studio.app"
 OUT="dist-cli/AudiobookStudio-${VERSION}-macos-arm64.zip"
 
 echo "==> Build slim .app (no embedded model)"
-SLIM=1 "$ROOT/scripts/build-app.sh"
+SLIM=1 "$ROOT/scripts/build-app.sh" "$VERSION"
 
 echo "==> Zip .app (ditto preserves bundle attrs)"
 mkdir -p dist-cli

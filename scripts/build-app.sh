@@ -17,6 +17,8 @@ RES="$APP/Contents/Resources"
 PDFIUM_SRC="${PDFIUM_SRC:-$ROOT/vendor/libpdfium.dylib}"
 MODEL_REPO_DIR="models--prince-canuma--Kokoro-82M"
 HF_HUB_SRC="${HF_HUB_SRC:-$HOME/.cache/huggingface/hub}"
+# Version for the bundle's Info.plist: explicit arg, else Cargo.toml.
+VERSION="${1:-$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')}"
 
 echo "==> 1/5  Release build (GUI + abs)"
 cargo build --release --bin audiobook-studio --bin abs
@@ -33,7 +35,11 @@ rm -rf "$APP"
 mkdir -p "$MACOS" "$RES/sidecar"
 cp "target/release/audiobook-studio" "$MACOS/"
 cp "target/release/abs" "$MACOS/"
+# Copy Info.plist, then stamp the release version into both version keys.
 cp "packaging/Info.plist" "$APP/Contents/Info.plist"
+PB=/usr/libexec/PlistBuddy
+"$PB" -c "Set :CFBundleVersion ${VERSION}" "$APP/Contents/Info.plist"
+"$PB" -c "Set :CFBundleShortVersionString ${VERSION}" "$APP/Contents/Info.plist"
 cp "$ROOT/sidecar/dist/g2p_server" "$RES/sidecar/g2p_server"
 
 # libpdfium next to the executable (cover.rs / OCR look here).
