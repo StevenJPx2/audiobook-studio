@@ -106,6 +106,19 @@ cargo build --release    # GUI: target/release/audiobook-studio · CLI: target/r
 See **BUNDLING.md** for the asset map, the frozen-sidecar approach, offline
 model embedding, and the deferred codesign/notarize steps.
 
+## Releasing
+
+Tag-driven, automated to Homebrew. Bump `version` in `Cargo.toml`, then:
+
+```bash
+git tag v0.1.0 && git push --tags
+```
+
+A macOS-arm64 CI job builds the CLI tarball, publishes a GitHub Release, and
+bumps the Homebrew tap formula. Commits follow **Conventional Commits** (see
+CONTRIBUTING.md); the release flow + required `HOMEBREW_TAP_TOKEN` secret are
+documented in BUNDLING.md.
+
 ## Cover art
 
 By default the app **renders page 1 of the PDF** to `cover.jpg` in the output

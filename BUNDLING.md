@@ -67,9 +67,30 @@ Audiobook Studio.app/
       └─ hf-cache/...            # pre-cached MLX model
 ```
 
-`scripts/build-app.sh` (pending): `cargo build --release`, freeze the sidecar,
-assemble the tree above, write `Info.plist`, copy the pre-cached model. Produces
-an **unsigned** `.app`.
+`scripts/build-app.sh`: `cargo build --release`, freeze the sidecar, assemble
+the tree above, write `Info.plist`, copy the pre-cached model. Produces an
+**unsigned** `.app`.
+
+## Release process (tag → CI → Homebrew)
+
+Releases are tag-driven (`.github/workflows/release.yml`), no crates.io publish.
+
+1. Bump `version` in `Cargo.toml`, commit (Conventional Commits — see
+   CONTRIBUTING.md), and tag: `git tag v0.1.0 && git push --tags`.
+2. On the tag, a `macos-14` (arm64) runner:
+   - fetches `libpdfium` (bblanchon arm64), runs
+     `scripts/package-cli-tarball.sh` (release `abs` + frozen sidecar),
+   - creates the GitHub Release and uploads
+     `abs-<ver>-macos-arm64.tar.gz` + `.sha256`,
+   - bumps the Homebrew tap formula (`url` + `sha256`) via
+     `bump-homebrew-formula-action`.
+3. Users `brew upgrade audiobook-studio`.
+
+**Required secret:** `HOMEBREW_TAP_TOKEN` — a PAT with `contents:write` on
+`StevenJPx2/homebrew-audiobook-studio`. If absent, the build + GitHub Release
+still run; only the formula bump is skipped. The canonical formula lives in the
+tap at `Formula/audiobook-studio.rb`; `packaging/homebrew/audiobook-studio.rb`
+here is the seed copy.
 
 ## Codesign + notarize (DEFERRED — needs Developer ID)
 

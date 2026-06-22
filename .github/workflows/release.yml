@@ -1,0 +1,84 @@
+name: Release
+
+# Tag-triggered release for the macOS/Apple-Silicon CLI. Pushing a v* tag:
+#   1. builds the self-contained CLI tarball (frozen sidecar + abs + libpdfium),
+#   2. creates a GitHub Release and uploads the tarball + .sha256,
+#   3. bumps the Homebrew tap formula (url + sha256) so `brew upgrade` works.
+#
+# No crates.io publish — this is a binary application, not a library.
+#
+# Required repo secret: HOMEBREW_TAP_TOKEN — a PAT (contents:write) on
+# StevenJPx2/homebrew-audiobook-studio. Without it, steps 1-2 still run; the
+# formula bump (step 3) is skipped.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # create releases + upload assets
+
+jobs:
+  release:
+    name: Build + release CLI (macos-arm64)
+    runs-on: macos-14
+    env:
+      # Exposed at job level so the formula-bump step's `if:` can detect it.
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive version from tag
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      # MLX builds need the Metal toolchain shipped with Xcode 16.x.
+      - name: Select Xcode 16.2
+        run: sudo xcode-select -s /Applications/Xcode_16.2.app
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install uv (sidecar freeze)
+        uses: astral-sh/setup-uv@v6
+
+      - name: Build CLI tarball (release abs + frozen sidecar + libpdfium)
+        env:
+          # vendor/libpdfium.dylib is gitignored; fetch the arm64 build.
+          PDFIUM_URL: https://github.com/bblanchon/pdfium-binaries/releases/latest/download/pdfium-mac-arm64.tgz
+        run: |
+          set -euo pipefail
+          mkdir -p vendor
+          curl -fsSL "$PDFIUM_URL" -o /tmp/pdfium.tgz
+          tar -xzf /tmp/pdfium.tgz -C /tmp
+          cp /tmp/lib/libpdfium.dylib vendor/libpdfium.dylib
+          ./scripts/package-cli-tarball.sh "${{ steps.ver.outputs.version }}"
+
+      - name: Create GitHub Release + upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist-cli/abs-${{ steps.ver.outputs.version }}-macos-arm64.tar.gz
+            dist-cli/abs-${{ steps.ver.outputs.version }}-macos-arm64.tar.gz.sha256
+          generate_release_notes: true
+
+      - name: Compute tarball sha256
+        id: sha
+        run: |
+          f="dist-cli/abs-${{ steps.ver.outputs.version }}-macos-arm64.tar.gz"
+          echo "sha256=$(shasum -a 256 "$f" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Bump Homebrew formula in tap
+        if: env.HOMEBREW_TAP_TOKEN != ''
+        uses: mislav/bump-homebrew-formula-action@v3
+        env:
+          COMMITTER_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        with:
+          formula-name: audiobook-studio
+          formula-path: Formula/audiobook-studio.rb
+          homebrew-tap: StevenJPx2/homebrew-audiobook-studio
+          download-url: https://github.com/StevenJPx2/audiobook-studio/releases/download/${{ github.ref_name }}/abs-${{ steps.ver.outputs.version }}-macos-arm64.tar.gz
+          commit-message: |
+            audiobook-studio ${{ steps.ver.outputs.version }}
+        # The action downloads the tarball and computes its sha256 itself.

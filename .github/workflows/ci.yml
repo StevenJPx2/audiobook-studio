@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   sidecar:
-    name: Sidecar (uv lock check)
+    name: Sidecar (uv lock + G2P smoke)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,13 +22,18 @@ jobs:
       - name: Verify lockfile is up to date
         working-directory: sidecar
         run: uv lock --check
-      - name: Sync (resolve + install deps)
+      - name: Sync (resolve + install deps, frozen)
         working-directory: sidecar
         run: uv sync --frozen
-      - name: Import smoke test (server module loads)
+      - name: G2P smoke test (torch-free misaki phonemizes a line)
         working-directory: sidecar
-        # kokoro/torch are heavy; just confirm the FastAPI app + non-ML deps import.
-        run: uv run python -c "import fastapi, uvicorn, soundfile, fitz; print('sidecar deps OK')"
+        # The slim sidecar is torch-free: confirm misaki + the bundled
+        # espeak-ng (espeakng_loader) load and produce phonemes end to end.
+        run: |
+          printf 'Hello world.\n__QUIT__\n' | uv run python g2p_server.py >/tmp/ph.txt 2>/tmp/ph.err
+          echo "--- phonemes ---"; cat /tmp/ph.txt
+          echo "--- ready line ---"; grep __READY__ /tmp/ph.err
+          test -s /tmp/ph.txt
 
   app:
     name: App (check + test + fmt)
