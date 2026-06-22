@@ -30,6 +30,8 @@ enum Msg {
     Progress(Progress),
     Done(String),
     Error(String),
+    /// First-run voice-model download finished (Ok) or failed (Err message).
+    ModelReady(Result<(), String>),
 }
 
 pub struct App {
@@ -55,6 +57,12 @@ pub struct App {
 
     progress: Option<Progress>,
     result_path: Option<String>,
+
+    /// First-run voice-model download state: None = present/done, Some(true) =
+    /// downloading, Some(false) = failed (shown as a warning; retried lazily on
+    /// first generate). Drives a non-blocking setup banner.
+    model_downloading: bool,
+    model_failed: bool,
 }
 
 impl Default for App {
@@ -84,8 +92,11 @@ impl Default for App {
             ollama_up: false,
             progress: None,
             result_path: None,
+            model_downloading: false,
+            model_failed: false,
         };
         app.refresh_models();
+        app.warm_model_if_needed();
         app
     }
 }
@@ -119,6 +130,24 @@ impl App {
                     let _ = tx.send(Msg::Progress(Progress::new("__models__", "", 0, 0)));
                 }
             }
+        });
+    }
+
+    /// On first run the MLX voice model may not be cached (slim .app ships
+    /// without it). Detect that and download it in the background, showing a
+    /// non-blocking setup banner, so the first Generate isn't a silent stall.
+    fn warm_model_if_needed(&mut self) {
+        let repo = crate::tts::MODEL_REPO;
+        if crate::tts::model_present(repo) {
+            return; // already cached — nothing to do
+        }
+        self.model_downloading = true;
+        let tx = self.tx.clone();
+        let voice = self.voice.voice.clone();
+        std::thread::spawn(move || {
+            // Best-effort; warm() triggers the one-time HuggingFace download.
+            let res = crate::tts::warm(repo, &voice).map_err(|e| e.to_string());
+            let _ = tx.send(Msg::ModelReady(res));
         });
     }
 
@@ -280,6 +309,13 @@ impl App {
                         self.stage = Stage::Review;
                     }
                 }
+                Msg::ModelReady(res) => {
+                    self.model_downloading = false;
+                    self.model_failed = res.is_err();
+                    if let Err(e) = res {
+                        eprintln!("[model] first-run download failed ({e}); will retry on generate");
+                    }
+                }
             }
         }
     }
@@ -344,6 +380,23 @@ impl eframe::App for App {
 
 impl App {
     fn view_drop(&mut self, ui: &mut egui::Ui) {
+        // First-run voice-model setup banner (slim .app ships without the model).
+        if self.model_downloading {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Setting up: downloading the voice model (~312 MB, first run only)…");
+            });
+            ui.separator();
+        } else if self.model_failed {
+            ui.colored_label(
+                egui::Color32::from_rgb(0xD9, 0x8A, 0x2B),
+                format!(
+                    "{}  Voice model not downloaded — it'll be fetched on the first Generate (needs internet).",
+                    egui_phosphor::regular::WARNING
+                ),
+            );
+            ui.separator();
+        }
         ui.add_space(40.0);
         ui.vertical_centered(|ui| {
             if self.busy {

@@ -114,6 +114,35 @@ pub fn generate(repo: &str, voice_name: &str, phonemes: &str, speed: f32) -> App
 }
 
 /// Preload the model + voice (model load is the slow part). Best-effort.
+/// On a fresh machine this triggers the one-time HuggingFace download of the
+/// MLX weights (~312 MB), so callers should run it off the UI thread.
 pub fn warm(repo: &str, voice_name: &str) -> AppResult<()> {
     imp::warm(repo, voice_name)
+}
+
+/// Is the MLX model for `repo` already cached locally (no download needed)?
+/// Used by the GUI to decide whether to show a first-run "downloading model"
+/// setup screen. Honors `HF_HOME` (set by `bundle_env` in a packaged .app);
+/// falls back to the default `~/.cache/huggingface` HF cache layout.
+pub fn model_present(repo: &str) -> bool {
+    // hf-hub cache dir: <hf_home>/hub/models--<org>--<name>/snapshots/<rev>/...
+    let hub = hf_hub_dir();
+    let dirname = format!("models--{}", repo.replace('/', "--"));
+    let snapshots = hub.join(&dirname).join("snapshots");
+    // Present if any snapshot dir exists with at least one entry.
+    std::fs::read_dir(&snapshots)
+        .ok()
+        .map(|mut it| it.any(|e| e.is_ok()))
+        .unwrap_or(false)
+}
+
+fn hf_hub_dir() -> std::path::PathBuf {
+    if let Some(h) = std::env::var_os("HF_HOME") {
+        return std::path::PathBuf::from(h).join("hub");
+    }
+    if let Some(h) = std::env::var_os("HF_HUB_CACHE") {
+        return std::path::PathBuf::from(h);
+    }
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default();
+    home.join(".cache/huggingface/hub")
 }

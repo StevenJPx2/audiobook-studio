@@ -26,8 +26,17 @@ pub fn init() {
     let Some(resources) = bundle_resources_dir() else {
         return; // dev / not bundled
     };
+    // Only force offline if the bundle actually carries a model in its cache
+    // (full build). A slim .app has no hf-cache (or an empty one) and must be
+    // free to download to the user's normal HF cache on first run.
     let hf_cache = resources.join("hf-cache");
-    if hf_cache.is_dir() {
+    let has_model = hf_cache
+        .join("hub")
+        .read_dir()
+        .ok()
+        .map(|mut it| it.any(|e| e.as_ref().map(|e| e.path().join("snapshots").is_dir()).unwrap_or(false)))
+        .unwrap_or(false);
+    if has_model {
         // SAFETY: called once at startup, before threads touch these vars.
         unsafe {
             if std::env::var_os("HF_HOME").is_none() {

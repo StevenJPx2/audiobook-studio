@@ -92,18 +92,27 @@ still run; only the formula bump is skipped. The canonical formula lives in the
 tap at `Formula/audiobook-studio.rb`; `packaging/homebrew/audiobook-studio.rb`
 here is the seed copy.
 
-## Codesign + notarize (DEFERRED — needs Developer ID)
+## Distribution & codesigning
 
-When ready, with a "Developer ID Application: <name> (<TEAMID>)" identity:
-1. `codesign --deep --force --options runtime --timestamp` the nested binaries
-   (sidecar, libpdfium, abs) then the app, with a hardened-runtime
-   entitlements plist (allow-jit / allow-unsigned-executable-memory may be
-   needed for MLX/Python-frozen code).
-2. `xcrun notarytool submit` (app-specific password or App Store Connect API
-   key) → `xcrun stapler staple`.
-3. Verify: `spctl -a -vv` and `codesign --verify --deep --strict`.
+Both the CLI and the GUI ship through the Homebrew tap
+(`StevenJPx2/homebrew-audiobook-studio`):
 
-These steps need secrets, so they live outside the repo and are run manually.
+- **CLI** — `brew install StevenJPx2/audiobook-studio/audiobook-studio`
+  (formula, prebuilt tarball).
+- **GUI** — `brew install --cask StevenJPx2/audiobook-studio/audiobook-studio-app`
+  (cask, slim `.app` zip; the model downloads on first launch).
+
+**Codesigning is NOT required.** Homebrew installs via curl, which does not set
+the `com.apple.quarantine` flag, so unsigned binaries/apps launch without a
+Gatekeeper prompt for `brew install` / `brew install --cask` users. This is why
+we distribute via the tap rather than a browser download (a browser-downloaded
+unsigned `.app` *would* be quarantined).
+
+Optional, only if you later distribute the `.app` as a direct download (DMG/zip
+from a website): sign + notarize with a Developer ID identity using
+`packaging/entitlements.plist` (hardened runtime; allow-jit / unsigned-exec
+memory for MLX + the frozen Python sidecar), then `xcrun notarytool submit` →
+`xcrun stapler staple`. Not needed for the Homebrew path.
 
 ## Known risks / open items
 

@@ -50,15 +50,23 @@ else
   echo "    note: packaging/AppIcon.icns absent (no custom icon)"
 fi
 
-echo "==> 4/5  Embed MLX Kokoro model (offline)"
-SRC_MODEL="$HF_HUB_SRC/$MODEL_REPO_DIR"
-if [[ -d "$SRC_MODEL" ]]; then
-  mkdir -p "$RES/hf-cache/hub"
-  cp -R "$SRC_MODEL" "$RES/hf-cache/hub/"
-  echo "    embedded $(du -sh "$RES/hf-cache" | cut -f1) model cache"
+# SLIM=1 (default) ships WITHOUT the 312M model — the app downloads it from
+# HuggingFace on first run, showing a setup screen. SLIM=0 embeds it for a
+# fully-offline, larger .app.
+SLIM="${SLIM:-1}"
+if [[ "$SLIM" == "1" ]]; then
+  echo "==> 4/5  Slim build — model NOT embedded (downloads on first run)"
 else
-  echo "    WARN: model cache not found at $SRC_MODEL." >&2
-  echo "          Run a generate once to populate ~/.cache/huggingface, or set HF_HUB_SRC." >&2
+  echo "==> 4/5  Embed MLX Kokoro model (offline, SLIM=0)"
+  SRC_MODEL="$HF_HUB_SRC/$MODEL_REPO_DIR"
+  if [[ -d "$SRC_MODEL" ]]; then
+    mkdir -p "$RES/hf-cache/hub"
+    cp -R "$SRC_MODEL" "$RES/hf-cache/hub/"
+    echo "    embedded $(du -sh "$RES/hf-cache" | cut -f1) model cache"
+  else
+    echo "    WARN: model cache not found at $SRC_MODEL." >&2
+    echo "          Run a generate once to populate ~/.cache/huggingface, or set HF_HUB_SRC." >&2
+  fi
 fi
 
 echo "==> 5/5  Done (UNSIGNED)"

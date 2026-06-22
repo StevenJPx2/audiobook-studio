@@ -55,12 +55,17 @@ jobs:
           cp /tmp/lib/libpdfium.dylib vendor/libpdfium.dylib
           ./scripts/package-cli-tarball.sh "${{ steps.ver.outputs.version }}"
 
+      - name: Build slim GUI .app zip (model downloads on first run)
+        run: ./scripts/package-app-zip.sh "${{ steps.ver.outputs.version }}"
+
       - name: Create GitHub Release + upload assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist-cli/abs-${{ steps.ver.outputs.version }}-macos-arm64.tar.gz
             dist-cli/abs-${{ steps.ver.outputs.version }}-macos-arm64.tar.gz.sha256
+            dist-cli/AudiobookStudio-${{ steps.ver.outputs.version }}-macos-arm64.zip
+            dist-cli/AudiobookStudio-${{ steps.ver.outputs.version }}-macos-arm64.zip.sha256
           generate_release_notes: true
 
       - name: Compute tarball sha256
@@ -82,3 +87,16 @@ jobs:
           commit-message: |
             audiobook-studio ${{ steps.ver.outputs.version }}
         # The action downloads the tarball and computes its sha256 itself.
+
+      - name: Bump Homebrew cask in tap (GUI .app)
+        if: env.HOMEBREW_TAP_TOKEN != ''
+        uses: mislav/bump-homebrew-formula-action@v3
+        env:
+          COMMITTER_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        with:
+          formula-name: audiobook-studio-app
+          formula-path: Casks/audiobook-studio-app.rb
+          homebrew-tap: StevenJPx2/homebrew-audiobook-studio
+          download-url: https://github.com/StevenJPx2/audiobook-studio/releases/download/${{ github.ref_name }}/AudiobookStudio-${{ steps.ver.outputs.version }}-macos-arm64.zip
+          commit-message: |
+            audiobook-studio-app ${{ steps.ver.outputs.version }}

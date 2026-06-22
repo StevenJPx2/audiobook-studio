@@ -41,14 +41,24 @@ macOS / Apple Silicon only (MLX requirement).
 > `espeakng_loader`. In a packaged build the sidecar is frozen to a standalone
 > binary (no Python/uv at runtime).
 
-## Install the CLI (`abs`)
+## Install (Apple Silicon, via Homebrew)
 
-Homebrew (Apple Silicon):
+GUI app:
+
+```bash
+brew install --cask StevenJPx2/audiobook-studio/audiobook-studio-app
+```
+
+CLI (`abs`):
 
 ```bash
 brew install StevenJPx2/audiobook-studio/audiobook-studio
 abs doctor        # checks Ollama, models, ffmpeg, libpdfium, sidecar
 ```
+
+No codesigning prompt — Homebrew installs aren't quarantined. On first launch
+the GUI downloads the MLX voice model (~312 MB) from HuggingFace, shown as a
+setup step (the slim app ships without it).
 
 Or from source (installs to `~/.cargo/bin`, with the frozen sidecar + libpdfium
 placed beside it):
@@ -99,8 +109,10 @@ cargo build --release    # GUI: target/release/audiobook-studio · CLI: target/r
 ## Package a distributable `.app` / CLI
 
 ```bash
-./scripts/build-app.sh            # unsigned dist-app/Audiobook Studio.app (self-contained)
-./scripts/package-cli-tarball.sh  # dist-cli/abs-<ver>-macos-arm64.tar.gz (for Homebrew)
+./scripts/build-app.sh                 # slim .app (model downloads on first run)
+SLIM=0 ./scripts/build-app.sh          # full self-contained .app (embeds the 312M model)
+./scripts/package-app-zip.sh           # slim .app zip + sha256 (for the Homebrew cask)
+./scripts/package-cli-tarball.sh       # CLI tarball + sha256 (for the Homebrew formula)
 ```
 
 See **BUNDLING.md** for the asset map, the frozen-sidecar approach, offline
